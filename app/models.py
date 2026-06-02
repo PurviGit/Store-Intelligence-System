@@ -1,10 +1,10 @@
 """
 Pydantic event schema (validation) and SQLAlchemy ORM models.
+Aligned with sample_events.jsonl resource schema from updated problem statement.
 """
 from typing import Optional, List
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import Column, String, Integer, Float, Boolean, Text, DateTime
-from sqlalchemy.dialects.sqlite import JSON as SQLITE_JSON
+from sqlalchemy import Column, String, Integer, Float, Boolean, Text
 from database import Base
 import datetime
 
@@ -13,47 +13,72 @@ VALID_EVENT_TYPES = {
     "ZONE_DWELL", "BILLING_QUEUE_JOIN", "BILLING_QUEUE_ABANDON", "REENTRY",
 }
 
+AGE_BUCKETS = {"18-24", "25-34", "35-44", "45+"}
 
-# --- SQLAlchemy ORM ---
+
+# ─── SQLAlchemy ORM ─────────────────────────────────────────────────────────────
 
 class EventORM(Base):
     __tablename__ = "events"
 
-    event_id   = Column(String, primary_key=True)
-    store_id   = Column(String, index=True, nullable=False)
-    camera_id  = Column(String, nullable=False)
-    visitor_id = Column(String, nullable=False)
-    event_type = Column(String, nullable=False)
-    timestamp  = Column(String, index=True, nullable=False)
-    zone_id    = Column(String, nullable=True)
-    dwell_ms   = Column(Integer, default=0)
-    is_staff   = Column(Boolean, default=False)
-    confidence = Column(Float, default=0.0)
-    queue_depth  = Column(Integer, nullable=True)
-    sku_zone     = Column(String, nullable=True)
-    session_seq  = Column(Integer, default=1)
+    event_id         = Column(String, primary_key=True)
+    store_id         = Column(String, index=True, nullable=False)
+    camera_id        = Column(String, nullable=False)
+    visitor_id       = Column(String, nullable=False)
+    event_type       = Column(String, nullable=False)
+    timestamp        = Column(String, index=True, nullable=False)
+    zone_id          = Column(String, nullable=True)
+    zone_name        = Column(String, nullable=True)
+    zone_type        = Column(String, nullable=True)
+    is_revenue_zone  = Column(String, nullable=True, default="No")
+    dwell_ms         = Column(Integer, default=0)
+    is_staff         = Column(Boolean, default=False)
+    confidence       = Column(Float, default=0.0)
+    is_face_hidden   = Column(Boolean, default=True)
+    gender_pred      = Column(String, nullable=True)
+    age_pred         = Column(Integer, nullable=True)
+    age_bucket       = Column(String, nullable=True)
+    group_id         = Column(String, nullable=True)
+    group_size       = Column(Integer, nullable=True)
+    zone_hotspot_x   = Column(Float, nullable=True)
+    zone_hotspot_y   = Column(Float, nullable=True)
+    # metadata fields
+    queue_depth      = Column(Integer, nullable=True)
+    sku_zone         = Column(String, nullable=True)
+    session_seq      = Column(Integer, default=1)
 
 
-# --- Pydantic Schema ---
+# ─── Pydantic Schema ─────────────────────────────────────────────────────────────
 
 class EventMetadata(BaseModel):
     queue_depth: Optional[int] = None
-    sku_zone: Optional[str] = None
+    sku_zone:    Optional[str] = None
     session_seq: int = 1
 
 
 class EventIn(BaseModel):
-    event_id:   str
-    store_id:   str
-    camera_id:  str
-    visitor_id: str
-    event_type: str
-    timestamp:  str
-    zone_id:    Optional[str] = None
-    dwell_ms:   int = 0
-    is_staff:   bool = False
-    confidence: float = Field(ge=0.0, le=1.0, default=0.85)
-    metadata:   Optional[EventMetadata] = None
+    event_id:        str
+    store_id:        str
+    camera_id:       str
+    visitor_id:      str
+    event_type:      str
+    timestamp:       str
+    zone_id:         Optional[str] = None
+    zone_name:       Optional[str] = None
+    zone_type:       Optional[str] = None
+    is_revenue_zone: Optional[str] = "No"
+    dwell_ms:        int = 0
+    is_staff:        bool = False
+    confidence:      float = Field(ge=0.0, le=1.0, default=0.85)
+    is_face_hidden:  bool = True
+    gender_pred:     Optional[str] = None
+    age_pred:        Optional[int] = None
+    age_bucket:      Optional[str] = None
+    group_id:        Optional[str] = None
+    group_size:      Optional[int] = None
+    zone_hotspot_x:  Optional[float] = None
+    zone_hotspot_y:  Optional[float] = None
+    metadata:        Optional[EventMetadata] = None
 
     @field_validator("event_type")
     @classmethod
@@ -77,7 +102,7 @@ class IngestRequest(BaseModel):
 
 
 class IngestResponse(BaseModel):
-    ingested: int
-    duplicates: int
-    errors: int
+    ingested:      int
+    duplicates:    int
+    errors:        int
     error_details: List[dict] = []

@@ -2,10 +2,11 @@
 
 Physical-store analytics inspired by Google Analytics:
 CCTV footage → customer journeys → business intelligence.
-Real-time store analytics from CCTV footage — Brigade Bangalore (`STORE_BLR_002`).
 
-> **Dataset:** April 10, 2026 · 5 CCTV cameras · 4,879 events · 60 unique visitors · 24 POS transactions  
-> Events auto-load on first startup. Add `?date=2026-04-10` to all API calls.
+Two stores: **STORE_BLR_001** (Store 1) and **STORE_BLR_002** (Brigade Bangalore).
+
+> **Dataset:** April 10, 2026 · 2 stores · 8 CCTV cameras · 3,000+ events  
+> Events auto-load on first startup. Acceptance gate: `GET /stores/STORE_BLR_002/metrics`
 
 ## Dashboard Preview
 
@@ -19,26 +20,41 @@ Real-time store analytics from CCTV footage — Brigade Bangalore (`STORE_BLR_00
 
 ```bash
 # 1. Clone the repo
-git clone <your-repo-url> store-intelligence
-cd store-intelligence
+git clone <your-repo-url> store-intelligence && cd store-intelligence
 
-# 2. Install dependencies
-pip install fastapi uvicorn sqlalchemy pydantic httpx pytest opencv-python-headless requests flask
+# 2. Start API + dashboard (Docker — no other steps needed)
+docker compose up --build
 
-# 3. Start the API  (data auto-loads on first run)
-cd app
-python -m uvicorn main:app --host 0.0.0.0 --port 8000
+# 3. Run the detection pipeline against CCTV clips (both stores)
+STORE1_DIR="/path/to/Store 1" STORE2_DIR="/path/to/Store 2" bash pipeline/run.sh
 
-# 4. Start the live dashboard (new terminal)
-cd dashboard
-python app.py
+# 4. Verify the API is working
+curl http://localhost:8000/stores/STORE_BLR_002/metrics
+curl http://localhost:8000/health
 
-# 5. Open in browser
-#    Dashboard : http://localhost:3000
-#    API docs  : http://localhost:8000/docs
+# 5. Open the live dashboard
+#    Web UI  : http://localhost:3000
+#    API docs: http://localhost:8000/docs
 ```
 
-**That's it.** The API auto-ingests `data/events.jsonl` on first startup — no manual ingest step needed.
+**Without Docker:** `pip install -r requirements.txt && cd app && uvicorn main:app --port 8000`
+
+The API **auto-ingests** `data/events.jsonl` on first startup — no manual ingest step needed.
+
+### Running the Detection Pipeline Manually
+
+```bash
+cd pipeline
+
+# Process both stores
+python detect.py --all-stores \
+  --store1-dir "/path/to/Store 1" \
+  --store2-dir "/path/to/Store 2" \
+  --output ../data/events.jsonl
+
+# Feed into API
+python ingest_events.py --input ../data/events.jsonl --api-url http://localhost:8000
+```
 
 ---
 

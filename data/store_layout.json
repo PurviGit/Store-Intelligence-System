@@ -1,23 +1,57 @@
 {
-  "store_id": "STORE_BLR_002",
-  "store_name": "Brigade_Bangalore",
-  "city": "Bangalore",
-  "open_hours": {"open": "10:00", "close": "22:00"},
-  "cameras": {
-    "CAM_ENTRY_01": {"role": "entry_exit", "zone_coverage": ["ENTRY_THRESHOLD"]},
-    "CAM_FLOOR_02": {"role": "main_floor", "zone_coverage": ["SKINCARE", "HAIRCARE"]},
-    "CAM_BILLING_03": {"role": "billing", "zone_coverage": ["BILLING"]},
-    "CAM_ZONE_04": {"role": "zone", "zone_coverage": ["MAKEUP", "DERMDOC"]},
-    "CAM_ZONE_05": {"role": "zone", "zone_coverage": ["EB_KOREAN", "BATH_BODY"]}
-  },
-  "zones": [
-    {"zone_id": "ENTRY_THRESHOLD", "sku_zone": null,        "camera_id": "CAM_ENTRY_01"},
-    {"zone_id": "SKINCARE",        "sku_zone": "SKINCARE",  "camera_id": "CAM_FLOOR_02"},
-    {"zone_id": "HAIRCARE",        "sku_zone": "HAIRCARE",  "camera_id": "CAM_FLOOR_02"},
-    {"zone_id": "BILLING",         "sku_zone": null,        "camera_id": "CAM_BILLING_03"},
-    {"zone_id": "MAKEUP",          "sku_zone": "MAKEUP",    "camera_id": "CAM_ZONE_04"},
-    {"zone_id": "DERMDOC",         "sku_zone": "SKINCARE",  "camera_id": "CAM_ZONE_04"},
-    {"zone_id": "EB_KOREAN",       "sku_zone": "SKINCARE",  "camera_id": "CAM_ZONE_05"},
-    {"zone_id": "BATH_BODY",       "sku_zone": "BATH_BODY", "camera_id": "CAM_ZONE_05"}
+  "stores": [
+    {
+      "store_id": "STORE_BLR_001",
+      "store_name": "Purplle_Store1_Bangalore",
+      "city": "Bangalore",
+      "open_hours": {"open": "10:00", "close": "22:00"},
+      "cameras": {
+        "CAM_ZONE_01":    {"role": "zone",      "zone_coverage": ["MINIMALIST", "AQUALOGICA", "FOXTALE"]},
+        "CAM_ZONE_02":    {"role": "zone",      "zone_coverage": ["SALM", "TFS", "JC"]},
+        "CAM_ENTRY_03":   {"role": "entry_exit","zone_coverage": ["ENTRY_THRESHOLD"]},
+        "CAM_BILLING_05": {"role": "billing",   "zone_coverage": ["BILLING"]}
+      },
+      "zones": [
+        {"zone_id": "ENTRY_THRESHOLD", "zone_name": "Entry / Exit", "zone_type": "ENTRY", "is_revenue_zone": "No",  "sku_zone": null,         "camera_id": "CAM_ENTRY_03",   "hotspot_x": 960, "hotspot_y": 800},
+        {"zone_id": "MINIMALIST",      "zone_name": "Minimalist",   "zone_type": "SHELF", "is_revenue_zone": "Yes", "sku_zone": "SKINCARE",   "camera_id": "CAM_ZONE_01",    "hotspot_x": 840, "hotspot_y": 90},
+        {"zone_id": "AQUALOGICA",      "zone_name": "Aqualogica",   "zone_type": "SHELF", "is_revenue_zone": "Yes", "sku_zone": "SKINCARE",   "camera_id": "CAM_ZONE_01",    "hotspot_x": 990, "hotspot_y": 90},
+        {"zone_id": "FOXTALE",         "zone_name": "Foxtale",      "zone_type": "SHELF", "is_revenue_zone": "Yes", "sku_zone": "SKINCARE",   "camera_id": "CAM_ZONE_01",    "hotspot_x": 1140,"hotspot_y": 90},
+        {"zone_id": "JC",              "zone_name": "Juicy Chemistry","zone_type": "SHELF","is_revenue_zone": "Yes", "sku_zone": "SKINCARE",   "camera_id": "CAM_ZONE_02",    "hotspot_x": 1240,"hotspot_y": 90},
+        {"zone_id": "SALM",            "zone_name": "Salm",         "zone_type": "SHELF", "is_revenue_zone": "Yes", "sku_zone": "SKINCARE",   "camera_id": "CAM_ZONE_02",    "hotspot_x": 250, "hotspot_y": 90},
+        {"zone_id": "TFS",             "zone_name": "TFS",          "zone_type": "SHELF", "is_revenue_zone": "Yes", "sku_zone": "SKINCARE",   "camera_id": "CAM_ZONE_02",    "hotspot_x": 390, "hotspot_y": 90},
+        {"zone_id": "NAIL_FRAGRANCE",  "zone_name": "Nail & Fragrance","zone_type":"DISPLAY","is_revenue_zone":"Yes","sku_zone": "FRAGRANCE",  "camera_id": "CAM_ZONE_01",    "hotspot_x": 530, "hotspot_y": 400},
+        {"zone_id": "MAKEUP_UNIT",     "zone_name": "Makeup Unit",  "zone_type": "DISPLAY","is_revenue_zone": "Yes","sku_zone": "MAKEUP",     "camera_id": "CAM_ZONE_01",    "hotspot_x": 830, "hotspot_y": 400},
+        {"zone_id": "FACES_LA",        "zone_name": "Faces / LA Girl","zone_type":"SHELF", "is_revenue_zone": "Yes","sku_zone": "MAKEUP",     "camera_id": "CAM_ZONE_02",    "hotspot_x": 390, "hotspot_y": 700},
+        {"zone_id": "MARS_NYBAE",      "zone_name": "Mars + NY Bae","zone_type": "SHELF", "is_revenue_zone": "Yes", "sku_zone": "MAKEUP",     "camera_id": "CAM_ZONE_02",    "hotspot_x": 730, "hotspot_y": 700},
+        {"zone_id": "MENS_SECTION",    "zone_name": "Mens Section", "zone_type": "SHELF", "is_revenue_zone": "Yes", "sku_zone": "MENS",       "camera_id": "CAM_ZONE_02",    "hotspot_x": 880, "hotspot_y": 700},
+        {"zone_id": "LOREAL_BEAUT",    "zone_name": "L'Oreal / Beaut","zone_type":"SHELF", "is_revenue_zone": "Yes","sku_zone": "HAIRCARE",   "camera_id": "CAM_ZONE_02",    "hotspot_x": 1150,"hotspot_y": 700},
+        {"zone_id": "BILLING",         "zone_name": "Billing Counter Queue","zone_type":"BILLING","is_revenue_zone":"Yes","sku_zone": null, "camera_id": "CAM_BILLING_05", "hotspot_x": 1280,"hotspot_y": 370}
+      ]
+    },
+    {
+      "store_id": "STORE_BLR_002",
+      "store_name": "Brigade_Bangalore",
+      "city": "Bangalore",
+      "open_hours": {"open": "10:00", "close": "22:00"},
+      "cameras": {
+        "CAM_ENTRY_01":   {"role": "entry_exit","zone_coverage": ["ENTRY_THRESHOLD"]},
+        "CAM_ZONE_02":    {"role": "zone",      "zone_coverage": ["EB_KOREAN", "DERMDOC", "MINIMALIST"]},
+        "CAM_BILLING_03": {"role": "billing",   "zone_coverage": ["BILLING"]},
+        "CAM_ZONE_04":    {"role": "zone",      "zone_coverage": ["FACES_CANADA", "NY_BAE", "MAKEUP_GONDOLA"]}
+      },
+      "zones": [
+        {"zone_id": "ENTRY_THRESHOLD",  "zone_name": "Entry / Exit",        "zone_type": "ENTRY",   "is_revenue_zone": "No",  "sku_zone": null,       "camera_id": "CAM_ENTRY_01",   "hotspot_x": 960,  "hotspot_y": 900},
+        {"zone_id": "EB_KOREAN",        "zone_name": "EB Korean Wall",       "zone_type": "SHELF",   "is_revenue_zone": "Yes", "sku_zone": "SKINCARE", "camera_id": "CAM_ZONE_02",    "hotspot_x": 200,  "hotspot_y": 400},
+        {"zone_id": "DERMDOC",          "zone_name": "DermDoc Zone",         "zone_type": "SHELF",   "is_revenue_zone": "Yes", "sku_zone": "SKINCARE", "camera_id": "CAM_ZONE_02",    "hotspot_x": 350,  "hotspot_y": 400},
+        {"zone_id": "MINIMALIST",       "zone_name": "Minimalist Zone",      "zone_type": "SHELF",   "is_revenue_zone": "Yes", "sku_zone": "SKINCARE", "camera_id": "CAM_ZONE_02",    "hotspot_x": 840,  "hotspot_y": 90},
+        {"zone_id": "COSRX_ROUNDLAB",   "zone_name": "CosRX / Round Lab",    "zone_type": "SHELF",   "is_revenue_zone": "Yes", "sku_zone": "SKINCARE", "camera_id": "CAM_ZONE_02",    "hotspot_x": 990,  "hotspot_y": 90},
+        {"zone_id": "FACES_CANADA",     "zone_name": "Faces Canada Wall",    "zone_type": "SHELF",   "is_revenue_zone": "Yes", "sku_zone": "MAKEUP",   "camera_id": "CAM_ZONE_04",    "hotspot_x": 390,  "hotspot_y": 700},
+        {"zone_id": "NY_BAE",           "zone_name": "NY Bae / Mars",        "zone_type": "SHELF",   "is_revenue_zone": "Yes", "sku_zone": "MAKEUP",   "camera_id": "CAM_ZONE_04",    "hotspot_x": 630,  "hotspot_y": 700},
+        {"zone_id": "MAKEUP_GONDOLA",   "zone_name": "MK Gondola Centre",    "zone_type": "DISPLAY", "is_revenue_zone": "Yes", "sku_zone": "MAKEUP",   "camera_id": "CAM_ZONE_04",    "hotspot_x": 1539, "hotspot_y": 500},
+        {"zone_id": "MAKEUP_UNIT",      "zone_name": "Makeup Application Unit","zone_type":"DISPLAY", "is_revenue_zone": "Yes", "sku_zone": "MAKEUP",  "camera_id": "CAM_ZONE_04",    "hotspot_x": 1572, "hotspot_y": 400},
+        {"zone_id": "LOREAL_BEAUT",     "zone_name": "L'Oreal / Beaut",      "zone_type": "SHELF",   "is_revenue_zone": "Yes", "sku_zone": "HAIRCARE", "camera_id": "CAM_ZONE_04",    "hotspot_x": 1150, "hotspot_y": 700},
+        {"zone_id": "BILLING",          "zone_name": "Billing Counter Queue","zone_type": "BILLING",  "is_revenue_zone": "Yes", "sku_zone": null,       "camera_id": "CAM_BILLING_03", "hotspot_x": 1746, "hotspot_y": 450}
+      ]
+    }
   ]
 }

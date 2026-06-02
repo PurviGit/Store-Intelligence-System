@@ -22,17 +22,41 @@ def get_db():
         db.close()
 
 
+def _migrate_schema():
+    """
+    Check if existing events table has the new columns added in v2 (zone_name, gender_pred, etc.).
+    If not, drop and recreate — acceptable for dev/demo because events are regenerated from clips.
+    In production this would be a proper Alembic migration.
+    """
+    NEW_COLUMNS = ["zone_name", "zone_type", "is_revenue_zone", "is_face_hidden",
+                   "gender_pred", "age_pred", "age_bucket", "group_id", "group_size",
+                   "zone_hotspot_x", "zone_hotspot_y"]
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("PRAGMA table_info(events)")).fetchall()
+            if not result:
+                return  # table doesn't exist yet — create_all will handle it
+            existing_cols = {row[1] for row in result}
+            missing = [c for c in NEW_COLUMNS if c not in existing_cols]
+            if missing:
+                # Schema is stale — drop and let create_all rebuild
+                conn.execute(text("DROP TABLE IF EXISTS events"))
+                conn.commit()
+    except Exception:
+        pass  # table doesn't exist yet
+
+
 def create_tables():
-    # 1. Create tables first
+    # 0. Migrate schema if necessary (handles old DB files with missing columns)
+    _migrate_schema()
+    # 1. Create tables
     Base.metadata.create_all(bind=engine)
-    # 2. Then add indexes — turns full-table scans into index lookups (10-50x faster)
+    # 2. Performance indexes
     with engine.connect() as conn:
-        # SQLite PRAGMAs first (no table dependency)
         conn.execute(text("PRAGMA journal_mode=WAL"))
         conn.execute(text("PRAGMA cache_size=-32000"))
         conn.execute(text("PRAGMA synchronous=NORMAL"))
         conn.commit()
-        # Indexes — only if events table exists
         try:
             for sql in [
                 "CREATE INDEX IF NOT EXISTS idx_store_ts      ON events(store_id, timestamp)",
@@ -43,7 +67,7 @@ def create_tables():
                 conn.execute(text(sql))
             conn.commit()
         except Exception:
-            pass  # Table not yet created — indexes will be added on next startup
+            pass
 
 
 def check_db_health() -> bool:
