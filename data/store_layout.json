@@ -1,0 +1,23 @@
+{
+  "store_id": "STORE_BLR_002",
+  "store_name": "Brigade_Bangalore",
+  "city": "Bangalore",
+  "open_hours": {"open": "10:00", "close": "22:00"},
+  "cameras": {
+    "CAM_ENTRY_01": {"role": "entry_exit", "zone_coverage": ["ENTRY_THRESHOLD"]},
+    "CAM_FLOOR_02": {"role": "main_floor", "zone_coverage": ["SKINCARE", "HAIRCARE"]},
+    "CAM_BILLING_03": {"role": "billing", "zone_coverage": ["BILLING"]},
+    "CAM_ZONE_04": {"role": "zone", "zone_coverage": ["MAKEUP", "DERMDOC"]},
+    "CAM_ZONE_05": {"role": "zone", "zone_coverage": ["EB_KOREAN", "BATH_BODY"]}
+  },
+  "zones": [
+    {"zone_id": "ENTRY_THRESHOLD", "sku_zone": null,        "camera_id": "CAM_ENTRY_01"},
+    {"zone_id": "SKINCARE",        "sku_zone": "SKINCARE",  "camera_id": "CAM_FLOOR_02"},
+    {"zone_id": "HAIRCARE",        "sku_zone": "HAIRCARE",  "camera_id": "CAM_FLOOR_02"},
+    {"zone_id": "BILLING",         "sku_zone": null,        "camera_id": "CAM_BILLING_03"},
+    {"zone_id": "MAKEUP",          "sku_zone": "MAKEUP",    "camera_id": "CAM_ZONE_04"},
+    {"zone_id": "DERMDOC",         "sku_zone": "SKINCARE",  "camera_id": "CAM_ZONE_04"},
+    {"zone_id": "EB_KOREAN",       "sku_zone": "SKINCARE",  "camera_id": "CAM_ZONE_05"},
+    {"zone_id": "BATH_BODY",       "sku_zone": "BATH_BODY", "camera_id": "CAM_ZONE_05"}
+  ]
+}

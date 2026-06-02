@@ -1,0 +1,97 @@
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+from sqlalchemy import func, distinct
+from database import get_db
+from models import EventORM
+from datetime import datetime, timezone
+from typing import Optional
+import json, os
+
+router = APIRouter()
+
+# Load zone metadata from store_layout.json
+def _load_zone_meta() -> dict:
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "..", "data", "store_layout.json"),
+        "data/store_layout.json",
+        "../data/store_layout.json",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            with open(p) as f:
+                layout = json.load(f)
+            return {z["zone_id"]: z for z in layout.get("zones", [])}
+    return {}
+
+ZONE_META = _load_zone_meta()
+
+
+@router.get("/stores/{store_id}/heatmap")
+def get_heatmap(
+    store_id: str,
+    date: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Zone visit frequency + avg dwell, normalised 0-100.
+    Includes data_confidence flag if fewer than 20 sessions in window.
+    """
+    date_str = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    rows = db.query(
+        EventORM.zone_id,
+        func.count(distinct(EventORM.visitor_id)).label("unique_visitors"),
+        func.count(EventORM.event_id).label("visit_events"),
+        func.avg(EventORM.dwell_ms).label("avg_dwell_ms"),
+    ).filter(
+        EventORM.store_id == store_id,
+        EventORM.event_type.in_(["ZONE_ENTER", "ZONE_DWELL", "ZONE_EXIT"]),
+        EventORM.is_staff == False,
+        EventORM.zone_id.isnot(None),
+        EventORM.timestamp.like(f"{date_str}%"),
+    ).group_by(EventORM.zone_id).all()
+
+    if not rows:
+        return {
+            "store_id": store_id,
+            "date": date_str,
+            "zones": [],
+            "data_confidence": "LOW",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    # Normalise visit_events to 0-100
+    max_visits = max(r.visit_events for r in rows)
+    max_dwell = max((r.avg_dwell_ms or 0) for r in rows)
+
+    total_sessions = sum(r.unique_visitors for r in rows)
+    confidence = "HIGH" if total_sessions >= 20 else "LOW"
+
+    zones = []
+    for r in rows:
+        if r.zone_id is None:
+            continue
+        freq_score = round(r.visit_events / max_visits * 100, 1) if max_visits > 0 else 0.0
+        dwell_score = round((r.avg_dwell_ms or 0) / max_dwell * 100, 1) if max_dwell > 0 else 0.0
+        meta = ZONE_META.get(r.zone_id, {})
+        zones.append({
+            "zone_id": r.zone_id,
+            "sku_zone": meta.get("sku_zone"),        # from store_layout.json
+            "camera_id": meta.get("camera_id"),      # from store_layout.json
+            "unique_visitors": r.unique_visitors,
+            "visit_events": r.visit_events,
+            "avg_dwell_ms": round(r.avg_dwell_ms or 0, 1),
+            "frequency_score": freq_score,
+            "dwell_score": dwell_score,
+        })
+
+    # Sort by frequency score descending
+    zones.sort(key=lambda z: z["frequency_score"], reverse=True)
+
+    return {
+        "store_id": store_id,
+        "date": date_str,
+        "zones": zones,
+        "data_confidence": confidence,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }

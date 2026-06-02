@@ -1,0 +1,29 @@
+# SQLite database files
+
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Python cache
+
+**pycache**/
+*.py[cod]
+
+# Pytest
+
+.pytest_cache/
+
+# Environment files
+
+.env
+.env.*
+
+# Challenge datasets/videos
+
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.zip
