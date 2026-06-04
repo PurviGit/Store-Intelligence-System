@@ -8,12 +8,14 @@
 # (5) the error_details list contains the event_id of the bad event."
 #
 # CHANGES MADE:
-# - Used /events/ingest/raw endpoint for partial validation (standard /events/ingest
-#   rejects the whole batch at Pydantic level if any event is invalid; /raw does
-#   per-event validation and returns partial success)
+# - AI initially generated tests using /events/ingest/raw for partial validation, assuming
+#   the main /events/ingest endpoint would reject the whole batch at Pydantic level.
+#   I changed IngestRequest to use List[Any] and added per-event EventIn(**raw) validation
+#   inside the handler so the main endpoint also returns partial success. Tests now use
+#   /events/ingest (the primary endpoint) consistently with assertions.py assertion 7.
 # - Added assertion on error_details[0]['event_id'] to confirm bad event is identified
-# - Removed test for confidence=1.5 partial success — Pydantic rejects at model level
-#   before the per-event loop, so confidence errors surface differently on /raw
+# - Removed test for confidence=1.5 partial success — Field(le=1.0) rejects at EventIn level,
+#   which is correct (confidence > 1.0 is an invalid event, not partial success)
 
 import uuid
 import pytest

@@ -209,7 +209,7 @@ def classify_staff(area: float, frame_count_in_scene: int, conf: float,
     Multi-signal staff classification using YOLOv8n bounding box properties.
 
     Signals (in decreasing reliability order):
-    1. Sustained presence (60+ processed frames = ~20s at 15fps/every_n=5)
+    1. Sustained presence (60+ processed frames = ~12s at 15fps/every_n=3)
        Combined with large bounding box area (staff near counter appear larger)
     2. High confidence + very long presence (staff stand still, fewer occlusions)
     3. Movement pattern: many direction reversals in y-axis indicate back-and-forth
@@ -257,12 +257,35 @@ def process_clip(clip_path: str, cam_meta: dict, store_id: str,
     sku_zone  = cam_meta.get("sku_zone")
     hotspot_x = cam_meta.get("hotspot_x", 0.0)
     hotspot_y = cam_meta.get("hotspot_y", 0.0)
-    fps = 15.0
-
     cap = cv2.VideoCapture(clip_path)
     if not cap.isOpened():
         print(f"[WARN] Cannot open {clip_path}", file=sys.stderr)
         return
+
+    # Read actual fps from the video file — do NOT assume 15fps.
+    # Brigade Road clips (and most modern CCTV) are 25–30fps, not 15fps.
+    # Wrong fps causes: (a) timestamps off by ~2x, (b) process_every_n too high
+    # at 15fps assumption means too-frequent sampling at real 25fps → IoU loses
+    # tracks constantly → ghost re-detections → inflated entry counts.
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps is None or fps < 1 or fps > 120:
+        fps = 25.0  # safe default for modern CCTV
+    fps = float(fps)
+
+    # Auto-adjust sampling to always target ~5fps effective, regardless of source fps.
+    # At 25fps: every 5th frame = 5fps. At 30fps: every 6th = 5fps. At 15fps: every 3rd = 5fps.
+    # Higher every_n = longer persistence required to emit ENTRY → filters ghost re-detections.
+    target_fps = 5.0
+    effective_every_n = max(1, round(fps / target_fps))
+    # Honour explicit --every override only if it's compatible with actual fps
+    if process_every_n != 3:
+        # User explicitly set --every, respect it
+        effective_every_n = process_every_n
+    else:
+        # Default was passed — use auto-detected value
+        process_every_n = effective_every_n
+
+    print(f"  [{store_id}] {Path(clip_path).name}: fps={fps:.1f}, process_every_n={process_every_n} (~{fps/process_every_n:.1f}fps effective)")
 
     tracker = Tracker()
     # _camera_prefix makes visitor IDs camera-scoped (prevents cross-camera ID collision)

@@ -134,6 +134,14 @@ Flask web app at port 3000 polls the API every 5 seconds and renders:
 
 ---
 
+## Known Limitations
+
+**Visitor ID cross-camera deduplication — resolved:** Store 2 has two entry cameras (CAM_ENTRY_01 and CAM_ENTRY_01B). Both cameras independently assign sequential visitor IDs starting at VIS_00001, causing 138 ID collisions and undercounting unique visitors by 35%. Identified and fixed by prefixing each camera's visitor_ids at the event layer: door 1 IDs become `E01_VIS_NNNNN`, door 2 IDs become `E1B_VIS_NNNNN`. After fix: Store 2 reports 389 unique visitors (237 door 1 + 152 door 2), conversion rate = 24/389 = 6.2%. The production-grade fix is to embed the camera_id directly in the tracker's `_new_visitor_id()` output string, which is the change applied in `emit.py`. Store 1 is unaffected (single entry camera, no collision possible).
+
+**Staff detection (Store 2):** Zero staff events were emitted for Store 2 in the provided clips. The staff heuristic (sustained presence ≥ 60 frames + bounding box area > 3500px²) did not fire on any track in Store 2. Likely cause: Store 2 staff were not in the entry/zone camera field of view for long enough consecutive periods, or stood behind counters outside the camera's frame. The API correctly handles zero staff events — the `is_staff=True` filter returns no results for Store 2, and all 389 visitor_ids are treated as customers.
+
+---
+
 ## AI-Assisted Decisions
 
 **Decision 1 — Trajectory-based ENTRY/EXIT direction (AI suggested position heuristic, I overrode it)**

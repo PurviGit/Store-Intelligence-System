@@ -1,10 +1,13 @@
-# SQLite database files
-
+# SQLite database files — must not be committed; auto-created on first API start
 *.db
 *.db-shm
 *.db-wal
 *.sqlite
 *.sqlite3
+
+# Backup files
+*.bak
+*.backup
 
 # Python cache
 

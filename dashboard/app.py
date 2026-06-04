@@ -769,8 +769,8 @@ async function loadStores() {
   try {
     const h = await fetch('/api/store-health').then(r => r.json());
     const allStores = (h.stores || []).filter(s => s.total_events > 0);
-    // Always show Store 1 first
-    const ORDER = ['STORE_BLR_001', 'STORE_BLR_002'];
+    // Store 2 (Brigade Bangalore) first — has POS data and full conversion metrics
+    const ORDER = ['STORE_BLR_002', 'STORE_BLR_001'];
     const stores = [...allStores].sort((a, b) => {
       const ia = ORDER.indexOf(a.store_id), ib = ORDER.indexOf(b.store_id);
       return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
@@ -786,7 +786,7 @@ async function loadStores() {
     sel.innerHTML = stores.map((s, i) =>
       `<option value="${s.store_id}"${i===0?' selected':''}>${labels[s.store_id]||s.store_id} · ${s.total_events.toLocaleString()} events</option>`
     ).join('');
-    currentStore = stores[0].store_id;  // Store 1 is now always first
+    currentStore = stores[0].store_id;  // Store 2 — Brigade Bangalore loads first
     document.getElementById('ns-events').textContent =
       stores.reduce((a, s) => a + s.total_events, 0).toLocaleString();
     refresh();
