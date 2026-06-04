@@ -6,8 +6,9 @@ import sys
 import os
 import pytest
 
-# Add app to path so imports work
+# Add app and pipeline to path so imports work from both directories
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pipeline"))
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker

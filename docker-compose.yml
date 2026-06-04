@@ -6,13 +6,13 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "9000:8000"
     environment:
-      - DATABASE_URL=sqlite:///./store_intelligence.db
+      # DB stored inside the bind-mounted data/ dir — always fresh on rebuild
+      - DATABASE_URL=sqlite:////app/data/store_intelligence.db
       - POS_FILE=/app/data/pos_transactions.csv
     volumes:
-      - ./data:/app/data
-      - db_data:/app/app
+      - ./data:/app/data      # events.jsonl, pos_transactions.csv, store_layout.json, DB
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -31,6 +31,3 @@ services:
     depends_on:
       - api
     restart: unless-stopped
-
-volumes:
-  db_data:

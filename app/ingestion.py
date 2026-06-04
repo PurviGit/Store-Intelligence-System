@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import desc
 from database import get_db
 from models import EventORM, IngestRequest, IngestResponse, EventIn
 from pydantic import ValidationError
+from typing import Optional
 
 router = APIRouter()
 
@@ -84,6 +86,39 @@ def ingest_events(request: IngestRequest, db: Session = Depends(get_db)):
         errors=errors,
         error_details=error_details,
     )
+
+
+@router.get("/events/recent")
+def get_recent_events(
+    store_id: Optional[str] = Query(None),
+    limit: int = Query(20, le=100),
+    db: Session = Depends(get_db),
+):
+    """
+    Return the N most recent events (used by dashboard live feed).
+    """
+    q = db.query(EventORM)
+    if store_id:
+        q = q.filter(EventORM.store_id == store_id)
+    rows = q.order_by(desc(EventORM.timestamp)).limit(limit).all()
+    return {
+        "events": [
+            {
+                "event_id":   r.event_id,
+                "store_id":   r.store_id,
+                "camera_id":  r.camera_id,
+                "visitor_id": r.visitor_id,
+                "event_type": r.event_type,
+                "timestamp":  r.timestamp,
+                "zone_id":    r.zone_id,
+                "is_staff":   r.is_staff,
+                "confidence": round(r.confidence, 3) if r.confidence else 0.0,
+                "dwell_ms":   r.dwell_ms,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
 
 
 @router.post("/events/ingest/raw")

@@ -6,6 +6,7 @@ from models import EventORM
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 import uuid
+from metrics import _latest_event_date
 
 router = APIRouter()
 
@@ -91,9 +92,19 @@ def _detect_conversion_drop(db: Session, store_id: str, date_str: str) -> Option
 
 
 def _detect_dead_zones(db: Session, store_id: str, reference_time: datetime) -> List[dict]:
-    """DEAD_ZONE: no zone visits in past 30 minutes relative to reference_time."""
-    cutoff = (reference_time - timedelta(minutes=DEAD_ZONE_MINUTES)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """
+    DEAD_ZONE: a product zone went silent for 30+ continuous minutes during the session.
+
+    Comparison method: per-zone, not a global cutoff.
+    Bug fixed: using a single global cutoff (reference_time - 30min) causes false positives
+    when short clips from earlier cameras are compared against a reference_time derived from
+    a later camera's last event. The correct check is:
+      last_zone_event_ts < (reference_time - 30min)
+    i.e. the zone's most recent event was more than 30 minutes before the session ended.
+    This only fires when a zone genuinely went silent during the session.
+    """
     anomalies = []
+    cutoff_dt = reference_time - timedelta(minutes=DEAD_ZONE_MINUTES)
 
     all_zones = db.query(distinct(EventORM.zone_id)).filter(
         EventORM.store_id == store_id,
@@ -101,22 +112,36 @@ def _detect_dead_zones(db: Session, store_id: str, reference_time: datetime) -> 
     ).all()
 
     for (zone_id,) in all_zones:
-        if zone_id in ("ENTRY_THRESHOLD", "BILLING"):
+        if zone_id in ("ENTRY_THRESHOLD", "BILLING", None):
             continue
-        recent = db.query(EventORM).filter(
+
+        # Get this zone's most recent event timestamp
+        last_zone_ts = db.query(func.max(EventORM.timestamp)).filter(
             EventORM.store_id == store_id,
             EventORM.zone_id == zone_id,
-            EventORM.timestamp >= cutoff,
-        ).count()
-        if recent == 0:
+        ).scalar()
+
+        if not last_zone_ts:
+            continue  # zone has no events at all — not a mid-session dead zone
+
+        try:
+            last_zone_dt = datetime.fromisoformat(last_zone_ts.replace("Z", "+00:00"))
+        except Exception:
+            continue
+
+        # Zone is "dead" only if it went silent 30+ min before the session ended.
+        # If the zone's last event is recent (within 30 min of session end) → not dead.
+        if last_zone_dt < cutoff_dt:
+            gap_min = round((reference_time - last_zone_dt).total_seconds() / 60, 1)
             anomalies.append({
                 "anomaly_id": str(uuid.uuid4()),
                 "type": "DEAD_ZONE",
                 "severity": "INFO",
-                "description": f"Zone {zone_id} had no visits in the last {DEAD_ZONE_MINUTES} min of the session",
+                "description": f"Zone {zone_id} had no visits for {gap_min} min before session end",
                 "suggested_action": f"Check zone {zone_id} for display issues or redirect staff",
                 "detected_at": _now_utc().isoformat(),
-                "details": {"zone_id": zone_id, "window_minutes": DEAD_ZONE_MINUTES},
+                "details": {"zone_id": zone_id, "gap_minutes": gap_min,
+                            "last_event": last_zone_ts},
             })
     return anomalies
 
@@ -197,7 +222,7 @@ def _detect_stale_camera(db: Session, store_id: str, reference_time: datetime, i
                 "type": "STALE_CAMERA_FEED",
                 "severity": "WARN",
                 "description": f"Camera {cam_id} stopped sending {round(gap,0):.0f} min before session end",
-                "suggested_action": "Camera went silent during recorded session — check mounting/connectivity",
+                "suggested_action": "Camera went silent during recorded session - check mounting/connectivity",
                 "detected_at": _now_utc().isoformat(),
                 "details": {"camera_id": cam_id, "gap_minutes": round(gap, 1), "mode": "historical"},
             })
@@ -232,7 +257,7 @@ def get_anomalies(
     Active anomalies: queue spike, conversion drop, dead zone, high abandonment, stale camera.
     Severity: INFO / WARN / CRITICAL. Includes suggested_action per anomaly.
     """
-    date_str = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_str = date or _latest_event_date(db, store_id)
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     is_historical = (date_str != today_str)
 

@@ -20,6 +20,9 @@
 .env
 .env.*
 
+# YOLO model weights (auto-downloaded on first run)
+*.pt
+
 # Challenge datasets/videos
 
 *.mp4
@@ -27,3 +30,10 @@
 *.mov
 *.mkv
 *.zip
+
+# Purplle provided dataset resource files (do not commit per rules)
+data/POS*sample*.csv
+data/sample_events*.jsonl
+data/Brigade*.csv
+*.mp4
+*.png

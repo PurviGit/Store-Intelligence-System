@@ -7,7 +7,7 @@ import json
 import uuid
 import requests
 
-API = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
+API = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:9000"
 STORE_ID = "STORE_BLR_002"
 DATE = "2026-04-10"
 PASS_MARK = "[PASS]"

@@ -1,135 +1,194 @@
 # Store Intelligence API
 
-Physical-store analytics inspired by Google Analytics:
-CCTV footage → customer journeys → business intelligence.
+> **Purplle Tech Challenge 2026 — Round 2**  
+> End-to-end Store Intelligence System: raw CCTV footage → live store analytics
 
-Two stores: **STORE_BLR_001** (Store 1) and **STORE_BLR_002** (Brigade Bangalore).
+---
 
-> **Dataset:** April 10, 2026 · 2 stores · 8 CCTV cameras · 3,000+ events  
-> Events auto-load on first startup. Acceptance gate: `GET /stores/STORE_BLR_002/metrics`
+## What This Builds
 
-## Dashboard Preview
+```
+CCTV Clips → YOLOv8n Detection → IoU Tracker + Re-ID → Structured Events → FastAPI → Live Dashboard
+```
 
-![Dashboard](docs/Dashboard.png)
+| Component | Implementation |
+|---|---|
+| Detection | YOLOv8n (class=0, conf≥0.35, every 5th frame) |
+| Direction | Trajectory-based: linear regression on centroid y-history (8-frame buffer) |
+| Tracking | Custom IoU tracker, centroid history, appearance Re-ID (HSV histogram) |
+| Groups | Union-find on centroids within 80px → separate ENTRY per person |
+| Staff | Sustained presence (60+ frames) + bounding box area > 3500px² |
+| Funnel | Two-pass cross-camera session stitching (direct ID + time-window) |
+| Anomalies | 5 types: queue spike, conversion drop, dead zone, abandonment, stale feed |
+| Dashboard | Flask web UI · animated detection demo · live event feed · real-time polling |
 
-![Dashboard](docs/Dashboard1.png)
+| Store | ID | Conversion |
+|---|---|---|
+| Store 1 Bangalore | `STORE_BLR_001` | 0.0% — no POS data, handled gracefully (not N/A) |
+| Brigade Bangalore | `STORE_BLR_002` | Computed from POS CSV time-window correlation |
+
+**Acceptance gate:** `GET /stores/STORE_BLR_002/metrics` returns `{unique_visitors, conversion_rate, avg_dwell_per_zone, current_queue_depth, abandonment_rate}`
 
 ---
 
 ## Setup in 5 Commands
 
 ```bash
-# 1. Clone the repo
-git clone <your-repo-url> store-intelligence && cd store-intelligence
+# 1. Clone
+git clone https://github.com/PurviGit/Store-Intelligence-System.git store-intelligence
+cd store-intelligence
 
-# 2. Start API + dashboard (Docker — no other steps needed)
-docker compose up --build
+# 2. Install
+pip install -r requirements.txt
 
-# 3. Run the detection pipeline against CCTV clips (both stores)
-STORE1_DIR="/path/to/Store 1" STORE2_DIR="/path/to/Store 2" bash pipeline/run.sh
+# 3. Start API (auto-ingests pre-generated events on first run — no manual steps)
+cd app && uvicorn main:app --host 0.0.0.0 --port 9000
 
-# 4. Verify the API is working
-curl http://localhost:8000/stores/STORE_BLR_002/metrics
-curl http://localhost:8000/health
+# 4. Verify acceptance gate
+curl http://localhost:9000/stores/STORE_BLR_002/metrics
+curl http://localhost:9000/health
 
-# 5. Open the live dashboard
-#    Web UI  : http://localhost:3000
-#    API docs: http://localhost:8000/docs
+# 5. Live dashboard
+cd dashboard && python app.py
+# → http://localhost:3000
 ```
 
-**Without Docker:** `pip install -r requirements.txt && cd app && uvicorn main:app --port 8000`
-
-The API **auto-ingests** `data/events.jsonl` on first startup — no manual ingest step needed.
-
-### Running the Detection Pipeline Manually
-
+**One command with Docker:**
 ```bash
-cd pipeline
-
-# Process both stores
-python detect.py --all-stores \
-  --store1-dir "/path/to/Store 1" \
-  --store2-dir "/path/to/Store 2" \
-  --output ../data/events.jsonl
-
-# Feed into API
-python ingest_events.py --input ../data/events.jsonl --api-url http://localhost:8000
+docker compose up --build
+# API:       http://localhost:9000
+# Dashboard: http://localhost:3000
+# Auto-ingest: events.jsonl loaded automatically on startup
 ```
 
 ---
 
-## Docker (One Command)
+## Running the Detection Pipeline Against CCTV Clips
+
+The pipeline uses **YOLOv8n** (downloads 6 MB model on first run).
 
 ```bash
-docker compose up --build
+# One-command pipeline: detect → ingest → verify
+STORE1_DIR="/path/to/Store 1" STORE2_DIR="/path/to/Store 2" bash pipeline/run.sh
+
+# Or step-by-step:
+python pipeline/detect.py \
+  --all-stores \
+  --store1-dir "path/to/Store 1" \
+  --store2-dir "path/to/Store 2" \
+  --output data/events.jsonl \
+  --every 5
+
+python pipeline/ingest_events.py \
+  --input data/events.jsonl \
+  --api-url http://localhost:9000 \
+  --batch-size 500
 ```
 
-- API → `http://localhost:8000`
-- Dashboard → `http://localhost:3000`
+**Expected clip filenames:**
+
+| Store | Camera role | Filename |
+|---|---|---|
+| Store 1 | Zone | `CAM 1 - zone.mp4`, `CAM 2 - zone.mp4` |
+| Store 1 | Entry/Exit | `CAM 3 - entry.mp4` |
+| Store 1 | Billing | `CAM 5 - billing.mp4` |
+| Store 2 | Entry/Exit | `entry 1.mp4`, `entry 2.mp4` |
+| Store 2 | Zone | `zone.mp4` |
+| Store 2 | Billing | `billing_area.mp4` |
 
 ---
 
 ## API Endpoints
 
-| Method | Endpoint                 | Description                                                 |
-| ------ | ------------------------ | ----------------------------------------------------------- |
-| POST   | `/events/ingest`         | Ingest batch of events (max 500, idempotent)                |
-| GET    | `/stores/{id}/metrics`   | Unique visitors, conversion rate, dwell, queue, abandonment |
-| GET    | `/stores/{id}/funnel`    | Entry → Zone → Billing → Purchase with drop-off %           |
-| GET    | `/stores/{id}/heatmap`   | Zone visit frequency + dwell, normalised 0–100              |
-| GET    | `/stores/{id}/anomalies` | Active anomalies with severity + suggested actions          |
-| GET    | `/health`                | DB status, last event per store, STALE_FEED warnings        |
+| Endpoint | Returns | Key Behaviour |
+|---|---|---|
+| `POST /events/ingest` | Batch ingest (max 500) | Idempotent by event_id · partial success |
+| `GET /stores/{id}/metrics` | Visitors, conversion, dwell, queue, abandonment | Staff excluded · real-time |
+| `GET /stores/{id}/funnel` | 4-stage: Entry→Zone→Billing→Purchase | Cross-camera session stitching |
+| `GET /stores/{id}/heatmap` | Zone frequency 0–100 + avg dwell | data_confidence flag |
+| `GET /stores/{id}/anomalies` | INFO/WARN/CRITICAL alerts | suggested_action per anomaly |
+| `GET /health` | DB status, per-store last event | STALE_FEED if >10 min lag |
+| `GET /events/recent` | Last N events (used by dashboard) | store_id filter, limit ≤100 |
 
-**Store ID:** `STORE_BLR_002`  
-**Data Date:** `2026-04-10`
-
-**Example:**
-
-```
-GET http://localhost:8000/stores/STORE_BLR_002/metrics?date=2026-04-10
-GET http://localhost:8000/stores/STORE_BLR_002/funnel?date=2026-04-10
-GET http://localhost:8000/stores/STORE_BLR_002/heatmap?date=2026-04-10
-GET http://localhost:8000/stores/STORE_BLR_002/anomalies?date=2026-04-10
+```bash
+# Sample calls
+curl http://localhost:9000/stores/STORE_BLR_002/metrics?date=2026-04-10
+curl http://localhost:9000/stores/STORE_BLR_002/funnel?date=2026-04-10
+curl http://localhost:9000/stores/STORE_BLR_002/anomalies
+curl http://localhost:9000/health
 ```
 
 ---
 
-## Running the Detection Pipeline
+## Cross-Camera Funnel — How It Works
 
-To regenerate events from raw CCTV clips:
+The funnel (`app/funnel.py` + `app/sessions.py`) solves the hardest problem: the same physical
+person has different visitor_ids on the entry camera and the zone camera because each camera
+runs an independent tracker.
 
-```bash
-cd pipeline
+**Two-pass `SessionStitcher`:**
 
-# Process clips → events.jsonl
-python detect.py --clips-dir /path/to/cctv/ --output ../data/events.jsonl --every 5
+1. **Pass 1 — Direct ID match**: zone/billing event visitor_id is directly in the entry
+   sessions set. Works for scoring harness test data where IDs are consistent across cameras.
 
-# Feed into API (only needed if you want to reload after regenerating)
-python ingest_events.py --events ../data/events.jsonl --api http://localhost:8000
-```
+2. **Pass 2 — Time-window match**: if no direct match, check whether the event timestamp
+   falls within any entry session window `[entry_ts, exit_ts + 60s]`. Works for real pipeline
+   data with camera-scoped visitor_ids.
 
----
-
-## Running Tests
-
-```bash
-cd tests
-set PYTHONPATH=../app    # Windows
-# export PYTHONPATH=../app  # Mac/Linux
-
-pytest test_pipeline.py test_metrics.py test_anomalies.py -v
-```
-
-37 tests · 3 files · all edge cases covered.
+Overlapping sessions (two visitors in the same time window) are handled by assigning each
+event to the session with the smallest `event_ts - entry_ts` gap (nearest start wins).
 
 ---
 
-## Self-Validation
+## Re-ID — Appearance Features
+
+Re-entry detection uses a two-stage pipeline:
+1. **Geometric gate** (fast): centroid distance <200px + area ratio 0.4–2.5 + within 5-min window
+2. **Appearance gate** (accurate): HSV color histogram correlation > 0.35
+
+The appearance gate directly solves the hardest Re-ID edge case: two different customers
+at the same door position 10 seconds apart. Blue clothing vs red clothing → histogram
+correlation ~0.1 (below 0.35 threshold) → correctly treated as two separate visitors.
+
+When no frame is available (test harness events injected via POST), `color_hist=None`
+and Re-ID falls back to geometry-only — graceful degradation with no crashes.
+
+---
+
+## Tests
 
 ```bash
-python assertions.py http://localhost:8000
-# Expected: 12 passed, 0 failed
+# Full test suite with coverage
+cd app && pytest ../tests/ -v --cov=. --cov-report=term-missing
+
+# Self-validation assertions (run against live API)
+python assertions.py http://localhost:9000
 ```
+
+**Test coverage: 40+ tests across 4 test files**
+
+| File | What it covers |
+|---|---|
+| `test_pipeline.py` | Ingest, idempotency, schema validation, all 8 event types, edge cases |
+| `test_metrics.py` | Metrics, funnel drop-off, heatmap normalisation, health endpoint |
+| `test_anomalies.py` | Queue spike, abandonment, dead zone, severity ordering, suggested_action |
+| `test_session_stitching.py` | Cross-camera funnel stitching, tracker Re-ID, direction detection |
+
+---
+
+## Dashboard
+
+Live web dashboard at `http://localhost:3000`:
+
+- **KPI cards**: unique visitors, conversion rate, queue depth, abandonment
+- **Animated pipeline demo**: canvas showing simulated YOLOv8 bounding boxes + zone overlays
+- **Pipeline flow visualization**: animated event packets CCTV→YOLOv8n→Tracker→API→Dashboard
+- **Live event feed**: polls `GET /events/recent` every 5s, colour-coded by event type
+- **Conversion funnel**: 4 stages with drop-off percentages
+- **Zone heatmap**: 0–100 frequency + dwell, data_confidence flag
+- **Anomalies**: CRITICAL/WARN/INFO with suggested_action
+- **Revenue metrics**: total, avg basket, revenue per visitor
+- **Store switcher**: BLR_001 / BLR_002 with event counts
 
 ---
 
@@ -138,105 +197,50 @@ python assertions.py http://localhost:8000
 ```
 store-intelligence/
 ├── pipeline/
-│   ├── detect.py         # MOG2 detection + group split + staff classifier
-│   ├── tracker.py        # IoU tracker + Re-ID re-entry detection
-│   ├── emit.py           # Event schema builder (8 event types)
-│   └── ingest_events.py  # Batch uploader to API
+│   ├── detect.py          # YOLOv8n detection · direction buffer · group detection · staff
+│   ├── tracker.py         # IoU tracker · centroid history · velocity direction · Re-ID
+│   ├── emit.py            # Event schema builder (all 49 fields)
+│   ├── ingest_events.py   # Batch ingest script for pipeline output
+│   └── run.sh             # One command: detect → ingest → verify
 ├── app/
-│   ├── main.py           # FastAPI entrypoint + auto-ingest on startup
-│   ├── database.py       # SQLAlchemy + SQLite (swap to Postgres via env var)
-│   ├── models.py         # Pydantic schema + ORM
-│   ├── ingestion.py      # POST /events/ingest (idempotent, partial success)
-│   ├── metrics.py        # GET /stores/{id}/metrics
-│   ├── funnel.py         # GET /stores/{id}/funnel
-│   ├── heatmap.py        # GET /stores/{id}/heatmap
-│   ├── anomalies.py      # GET /stores/{id}/anomalies
-│   └── health.py         # GET /health (STALE_FEED detection)
+│   ├── main.py            # FastAPI · auto-ingest startup · structured logging · trace_id
+│   ├── models.py          # Pydantic EventIn + SQLAlchemy ORM (49 columns)
+│   ├── database.py        # SQLite · WAL mode · schema migration · health check
+│   ├── ingestion.py       # POST /events/ingest · GET /events/recent
+│   ├── sessions.py        # Cross-camera SessionStitcher (two-pass: ID + time-window)
+│   ├── metrics.py         # GET /stores/{id}/metrics · hourly · revenue · zone-visits
+│   ├── funnel.py          # GET /stores/{id}/funnel (4-stage, SessionStitcher)
+│   ├── heatmap.py         # GET /stores/{id}/heatmap (0–100, data_confidence)
+│   ├── anomalies.py       # GET /stores/{id}/anomalies (5 types, 3 severities)
+│   └── health.py          # GET /health (STALE_FEED, per-store last event)
 ├── dashboard/
-│   └── app.py            # Flask web dashboard (auto-refreshes every 5s)
-├── data/
-│   ├── events.jsonl      # 4879 pre-generated events from CCTV clips (all 8 event types)
-│   ├── pos_transactions.csv  # Real Brigade Bangalore POS data (24 orders)
-│   └── store_layout.json # Zone definitions (SKINCARE, EB_KOREAN, MAKEUP...)
+│   └── app.py             # Flask dashboard · canvas demo · live event feed
 ├── tests/
 │   ├── conftest.py
-│   ├── test_pipeline.py  # Ingest edge cases (13 tests)
-│   ├── test_metrics.py   # Metrics/funnel/heatmap/health (16 tests)
-│   └── test_anomalies.py # Anomaly detection (8 tests)
+│   ├── test_pipeline.py          # # PROMPT: ... / # CHANGES MADE: ...
+│   ├── test_metrics.py           # # PROMPT: ... / # CHANGES MADE: ...
+│   ├── test_anomalies.py         # # PROMPT: ... / # CHANGES MADE: ...
+│   └── test_session_stitching.py # # PROMPT: ... / # CHANGES MADE: ...
 ├── docs/
-│   ├── DESIGN.md         # Architecture decisions + AI-assisted design
-│   └── CHOICES.md        # 3 key decisions with trade-off analysis
-├── assertions.py         # 10 self-validation assertions
-├── docker-compose.yml
-└── Dockerfile
+│   ├── DESIGN.md          # Architecture + 4 AI-Assisted Decisions
+│   └── CHOICES.md         # 5 decisions: model, schema, DB, VLM zone, cross-camera funnel
+├── data/
+│   ├── events.jsonl           # Pre-generated from YOLOv8n pipeline (auto-ingested)
+│   ├── pos_transactions.csv   # POS ground truth (Brigade Bangalore)
+│   └── store_layout.json      # 2 stores, zone definitions, camera roles
+├── assertions.py          # 10 self-validation assertions
+├── docker-compose.yml     # API (port 9000) + Dashboard (port 3000)
+├── Dockerfile             # API container
+├── Dockerfile.dashboard   # Dashboard container
+└── Dockerfile.pipeline    # Pipeline container (for offline processing)
 ```
 
-## System Architecture
-
-CCTV Cameras (5)
-↓
-OpenCV MOG2 Detection
-↓
-Tracker + Re-ID
-↓
-Structured Events
-↓
-SQLite Database
-↓
-FastAPI Analytics Layer
-↓
-Dashboard + Swagger API
-
 ---
 
-## Requirement Coverage
+## Key Design Decisions (see `docs/CHOICES.md` for full reasoning)
 
-| Requirement        | Implementation       |
-| ------------------ | -------------------- |
-| Detection Pipeline | OpenCV MOG2          |
-| Re-entry Handling  | IoU + Centroid Re-ID |
-| Event Schema       | emit.py              |
-| Metrics API        | metrics.py           |
-| Funnel Analysis    | funnel.py            |
-| Heatmap            | heatmap.py           |
-| Anomaly Detection  | anomalies.py         |
-| Dashboard          | dashboard/app.py     |
-| Tests              | 37 automated tests   |
-
----
-
-## Key Design Decisions
-
-| Decision        | Choice                                         | Why                                                 |
-| --------------- | ---------------------------------------------- | --------------------------------------------------- |
-| Detection       | OpenCV MOG2                                    | Runs on CPU — no GPU needed for `docker compose up` |
-| Tracker         | Custom IoU + centroid Re-ID                    | Handles re-entry without YOLOv8 dependency          |
-| Database        | SQLite → PostgreSQL via `DATABASE_URL` env var | Zero-setup locally, production-ready swap           |
-| API             | FastAPI                                        | Auto-generates Swagger docs, Pydantic validation    |
-| Conversion rate | POS transactions / unique visitors             | Only reliable source without customer IDs           |
-
-Full reasoning in [`docs/CHOICES.md`](docs/CHOICES.md)
-
----
-
-## Results (Brigade Bangalore – Apr 10, 2026)
-
-| Metric          | Value  |
-| --------------- | ------ |
-| Unique Visitors | 60     |
-| Purchases       | 24     |
-| Conversion Rate | 40.0%  |
-| Revenue         | ₹8,509 |
-| Queue Depth     | 10     |
-| Total Events    | 4,879  |
-| CCTV Cameras    | 5      |
-
----
-
-## North Star Metric
-
-**Offline conversion rate = purchases ÷ unique visitors**
-
-Everything in this system — detection accuracy, funnel stages, anomaly detection — exists to make this single number accurate and actionable for Purplle store managers.
-
-For Brigade Bangalore on April 10, 2026: **40.0% conversion** (24 purchases / 60 unique visitors).
+1. **YOLOv8n over MOG2** — real confidence scores, person-tight boxes, correct group detection
+2. **Trajectory direction** — 8-frame centroid history + linear regression slope (not position heuristic)
+3. **SQLite over PostgreSQL** — zero startup latency; `DATABASE_URL` env var for prod upgrade
+4. **Rule-based zone classification** — VLM tried (60% accuracy, 1.8s/frame), rejected
+5. **Time-window session stitching** — OSNet Re-ID tried (requires GPU, not feasible); two-pass stitcher chosen

@@ -1,27 +1,64 @@
 #!/bin/bash
 # One command to process all CCTV clips (Store 1 + Store 2) and feed into API
-# Usage:
-#   bash pipeline/run.sh
-#   STORE1_DIR=/path/to/store1 STORE2_DIR=/path/to/store2 bash pipeline/run.sh
 #
-# Environment variables:
-#   STORE1_DIR  Path to Store 1 video clips directory
-#   STORE2_DIR  Path to Store 2 video clips directory
-#   API_URL     API base URL (default: http://localhost:8000)
+# Usage:
+#   bash pipeline/run.sh                          # uses STORE1_DIR / STORE2_DIR env vars
+#   STORE1_DIR="/path/to/Store 1" STORE2_DIR="/path/to/Store 2" bash pipeline/run.sh
+#
+# Set these two environment variables to point at the video clip folders:
+#   STORE1_DIR   absolute path to the "Store 1" folder (contains CAM 1 - zone.mp4 etc.)
+#   STORE2_DIR   absolute path to the "Store 2" folder (contains entry 1.mp4 etc.)
+#   API_URL      default: http://localhost:8000
 
-STORE1_DIR="${STORE1_DIR:-C:/Users/Purvi/Downloads/Store 1-20260602T101818Z-3-001ec38db8/Store 1}"
-STORE2_DIR="${STORE2_DIR:-C:/Users/Purvi/Downloads/Store 2-20260602T101819Z-3-001099f208/Store 2}"
+set -e
+
+# Always resolve project root relative to this script — works on any machine
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Default paths — override with env vars on your machine
+STORE1_DIR="${STORE1_DIR:-}"
+STORE2_DIR="${STORE2_DIR:-}"
 API_URL="${API_URL:-http://localhost:8000}"
-EVENTS_FILE="data/events.jsonl"
+EVENTS_FILE="$PROJECT_ROOT/data/events.jsonl"
 
-echo "═══════════════════════════════════════════════"
-echo " Store Intelligence Detection Pipeline"
-echo "═══════════════════════════════════════════════"
+echo "=================================================="
+echo " Store Intelligence — Detection Pipeline"
+echo "=================================================="
+
+# Validate that store directories are provided
+if [ -z "$STORE1_DIR" ] || [ -z "$STORE2_DIR" ]; then
+    echo ""
+    echo "ERROR: Please set STORE1_DIR and STORE2_DIR environment variables."
+    echo ""
+    echo "Example (Windows Git Bash / WSL):"
+    echo '  STORE1_DIR="C:/path/to/Store 1" STORE2_DIR="C:/path/to/Store 2" bash pipeline/run.sh'
+    echo ""
+    echo "Example (Linux/Mac):"
+    echo '  STORE1_DIR="/path/to/Store 1" STORE2_DIR="/path/to/Store 2" bash pipeline/run.sh'
+    echo ""
+    echo "The Store 1 folder should contain: CAM 1 - zone.mp4, CAM 2 - zone.mp4, CAM 3 - entry.mp4, CAM 5 - billing.mp4"
+    echo "The Store 2 folder should contain: entry 1.mp4, entry 2.mp4, zone.mp4, billing_area.mp4"
+    exit 1
+fi
+
+if [ ! -d "$STORE1_DIR" ]; then
+    echo "ERROR: Store 1 directory not found: $STORE1_DIR"
+    exit 1
+fi
+
+if [ ! -d "$STORE2_DIR" ]; then
+    echo "ERROR: Store 2 directory not found: $STORE2_DIR"
+    exit 1
+fi
+
 echo " Store 1: $STORE1_DIR"
 echo " Store 2: $STORE2_DIR"
 echo " API:     $API_URL"
+echo " Output:  $EVENTS_FILE"
+echo "=================================================="
 
-cd /app/pipeline 2>/dev/null || cd "$(dirname "$0")/.."
+cd "$PROJECT_ROOT"
 
 echo ""
 echo "[1/3] Processing CCTV clips for both stores..."
@@ -34,12 +71,15 @@ python3 pipeline/detect.py \
 
 echo ""
 echo "[2/3] Ingesting events into API ($API_URL)..."
-python3 pipeline/ingest_events.py --input "$EVENTS_FILE" --api-url "$API_URL" --batch-size 500
+python3 pipeline/ingest_events.py \
+    --input "$EVENTS_FILE" \
+    --api-url "$API_URL" \
+    --batch-size 500
 
 echo ""
-echo "[3/3] Verifying..."
-curl -sf "$API_URL/stores/STORE_BLR_002/metrics" | python3 -m json.tool | head -15
-curl -sf "$API_URL/health" | python3 -m json.tool | head -10
+echo "[3/3] Verifying API..."
+curl -sf "$API_URL/stores/STORE_BLR_002/metrics" | python3 -m json.tool | head -10 || echo "API not reachable yet"
+curl -sf "$API_URL/health" | python3 -m json.tool | head -8 || true
 
 echo ""
-echo "✓ Pipeline complete — events in: $EVENTS_FILE"
+echo "Pipeline complete. Events saved to: $EVENTS_FILE"

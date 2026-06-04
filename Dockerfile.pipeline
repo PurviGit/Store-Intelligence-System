@@ -5,14 +5,25 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libglib2.0-0 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download YOLOv8n weights at build time (~6MB) so the pipeline
+# starts immediately without downloading at runtime.
+# If the download fails during build (no internet), the pipeline will
+# download on first run instead — ultralytics handles this gracefully.
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" || echo "YOLO weights will download at runtime"
+
 COPY pipeline/ ./pipeline/
 COPY data/ ./data/
 
-WORKDIR /app/pipeline
+ENV STORE1_DIR=/videos/store1
+ENV STORE2_DIR=/videos/store2
+ENV API_URL=http://api:8000
 
-CMD ["bash", "run.sh", "/videos", "http://api:8000"]
+WORKDIR /app
+
+CMD ["bash", "pipeline/run.sh"]

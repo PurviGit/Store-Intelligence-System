@@ -1,503 +1,781 @@
 """
 Live Web Dashboard — Flask + polling every 5s.
 Shows real-time store metrics from the Intelligence API.
+Includes live event feed, animated detection demo, and pipeline visualization.
 Access at: http://localhost:3000
 """
 import os
 import time
 import requests
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, jsonify, request as flask_request
 
 app = Flask(__name__)
-API_URL   = os.getenv("API_URL",   "http://localhost:8000")
-STORE_ID  = "STORE_BLR_002"
+API_URL   = os.getenv("API_URL",   "http://localhost:9000")
 DATA_DATE = os.getenv("DATA_DATE", "2026-04-10")
 
-# Simple in-memory cache — avoids hammering the API on every browser refresh
-_cache = {"data": None, "ts": 0}
-CACHE_TTL = 10  # seconds
+_cache = {}
+CACHE_TTL = 8  # seconds
 
 
-def _cached_summary():
-    if time.time() - _cache["ts"] < CACHE_TTL and _cache["data"]:
-        return _cache["data"]
-    r = requests.get(f"{API_URL}/stores/{STORE_ID}/summary?date={DATA_DATE}", timeout=10)
-    _cache["data"] = r.json()
-    _cache["ts"]   = time.time()
-    return _cache["data"]
+def _fetch(url: str, timeout: int = 5):
+    try:
+        return requests.get(url, timeout=timeout).json()
+    except Exception as e:
+        return {"error": str(e)}
 
-HTML = """<!DOCTYPE html>
+
+def _store_from_request():
+    return flask_request.args.get("store", "STORE_BLR_002")
+
+
+HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Store Intelligence — Live Dashboard</title>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Segoe UI', sans-serif; background: #0f0f1a; color: #e0e0f0; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0a0a14; --surface: #13132a; --border: #252550;
+  --accent: #7c3aed; --accent-light: #a78bfa; --green: #6ee7b7;
+  --yellow: #fbbf24; --red: #f87171; --text: #e0e0f0; --muted: #6b7280;
+}
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
 
-/* -- Header -- */
+/* ── Header ─────────────────────────────── */
 header {
-  background: #1a1a2e; padding: 14px 24px;
-  border-bottom: 2px solid #7c3aed;
+  background: var(--surface); padding: 12px 24px;
+  border-bottom: 2px solid var(--accent);
   display: flex; justify-content: space-between; align-items: center;
+  position: sticky; top: 0; z-index: 100;
 }
-header h1 { font-size: 1.25rem; color: #a78bfa; }
-.header-right { text-align: right; }
-#status { font-size: 0.8rem; color: #6ee7b7; }
-.date-badge {
-  display: inline-block; margin-top: 4px;
-  background: #2d2d4e; color: #a78bfa;
-  font-size: 0.72rem; padding: 2px 10px; border-radius: 12px;
+header h1 { font-size: 1.1rem; color: var(--accent-light); display: flex; align-items: center; gap: 8px; }
+.pulse { width: 8px; height: 8px; background: var(--green); border-radius: 50%; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{ opacity:1; transform:scale(1); } 50%{ opacity:.5; transform:scale(1.4); } }
+.header-right { display: flex; gap: 16px; align-items: center; }
+#live-status { font-size: 0.78rem; color: var(--green); }
+.store-sel {
+  background: var(--border); color: var(--accent-light);
+  border: 1px solid var(--accent); border-radius: 6px;
+  padding: 4px 10px; font-size: 0.8rem; cursor: pointer;
 }
 
-/* -- Business Insight Card -- */
-.insight-bar {
-  margin: 18px 24px 0;
-  background: linear-gradient(135deg, #1e1b4b, #1a1a2e);
-  border: 1px solid #7c3aed; border-radius: 12px;
-  padding: 16px 22px; display: flex; gap: 32px; align-items: center;
-  flex-wrap: wrap;
+/* ── Layout ──────────────────────────────── */
+.main { padding: 16px 24px; display: flex; flex-direction: column; gap: 16px; }
+
+/* ── Cards ───────────────────────────────── */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+.card-title { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 10px; }
+
+/* ── KPI Strip ───────────────────────────── */
+.kpi-strip { display: grid; grid-template-columns: repeat(5,1fr); gap: 12px; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+.kpi-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 6px; }
+.kpi-value { font-size: 2rem; font-weight: 700; color: var(--accent-light); line-height: 1; }
+.kpi-sub { font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
+
+/* ── North Star Banner ───────────────────── */
+.ns-banner {
+  background: linear-gradient(135deg,#1a1040,#13132a);
+  border: 1px solid var(--accent); border-radius: 10px;
+  padding: 14px 20px; display: flex; gap: 24px; align-items: center; flex-wrap: wrap;
 }
-.insight-bar .insight-title {
-  font-size: 0.7rem; color: #7c7ca8; text-transform: uppercase;
-  letter-spacing: 1px; margin-bottom: 4px;
+.ns-item { display: flex; flex-direction: column; gap: 2px; }
+.ns-label { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+.ns-value { font-size: 1rem; font-weight: 600; color: var(--accent-light); }
+.ns-divider { width: 1px; height: 32px; background: var(--border); }
+.ns-action {
+  margin-left: auto; padding: 8px 14px;
+  background: #3a1060; border: 1px solid var(--accent); border-radius: 8px;
+  font-size: 0.78rem; color: var(--accent-light);
 }
-.insight-bar .insight-value { font-size: 1.05rem; color: #c4b5fd; font-weight: 600; }
-.insight-divider { width: 1px; height: 36px; background: #2d2d4e; }
-.insight-action {
-  margin-left: auto; background: #7c3aed22; border: 1px solid #7c3aed55;
-  border-radius: 8px; padding: 8px 16px;
-  font-size: 0.8rem; color: #c4b5fd;
+
+/* ── Three-col: funnel + heatmap + anomalies ── */
+.three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+
+/* ── Funnel ──────────────────────────────── */
+.funnel-stage { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.fn-label { width: 90px; font-size: 0.78rem; color: var(--accent-light); flex-shrink: 0; }
+.fn-bar-wrap { flex: 1; background: var(--border); border-radius: 4px; height: 20px; overflow: hidden; }
+.fn-bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-light)); border-radius: 4px; transition: width .8s; }
+.fn-stat { width: 80px; text-align: right; font-size: 0.75rem; flex-shrink: 0; }
+.fn-drop { color: var(--red); font-size: 0.68rem; }
+.fn-pct  { color: var(--green); font-size: 0.68rem; }
+
+/* ── Heatmap ─────────────────────────────── */
+.hm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.hm-cell { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; text-align: center; }
+.hm-zone { font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+.hm-score { font-size: 1.6rem; font-weight: 700; line-height: 1; }
+.hm-dwell { font-size: 0.65rem; color: var(--muted); margin-top: 3px; }
+.hm-bar { background: var(--border); border-radius: 2px; height: 3px; margin-top: 6px; }
+.hm-bar-fill { height: 3px; border-radius: 2px; transition: width .8s; }
+
+/* ── Anomalies ───────────────────────────── */
+.anom { border-radius: 8px; padding: 9px 12px; margin-bottom: 7px; border-left: 3px solid var(--muted); }
+.anom.CRITICAL { border-color: var(--red);    background: #1a0808; }
+.anom.WARN     { border-color: var(--yellow); background: #1a1408; }
+.anom.INFO     { border-color: #60a5fa;       background: #08101a; }
+.anom-type  { font-size: 0.78rem; font-weight: 600; }
+.anom-action{ font-size: 0.68rem; color: var(--muted); margin-top: 2px; }
+
+/* ── Two-col charts ──────────────────────── */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.chart-area { height: 110px; display: flex; align-items: flex-end; gap: 3px; }
+.bc { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.bc-fill { width: 100%; border-radius: 2px 2px 0 0; transition: height .7s; min-height: 2px; }
+.bc-lbl { font-size: 0.58rem; color: var(--muted); }
+.bc-val { font-size: 0.6rem; color: var(--muted); }
+
+/* ── Pipeline Demo + Live Feed ───────────── */
+.demo-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+/* Pipeline animation */
+.pipeline-viz {
+  display: flex; align-items: center; gap: 0; padding: 14px 0; overflow: hidden;
 }
-.insight-action span { color: #f59e0b; font-weight: 600; }
-
-/* -- KPI grid -- */
-.kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 14px; padding: 16px 24px 0;
+.pipe-stage {
+  flex: 1; text-align: center; padding: 10px 6px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px; position: relative;
 }
-.card { background: #1a1a2e; border-radius: 12px; padding: 18px 20px; border: 1px solid #2d2d4e; }
-.card h3 { font-size: 0.7rem; color: #7c7ca8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-.metric { font-size: 2rem; font-weight: 700; color: #a78bfa; }
-.sub { font-size: 0.78rem; color: #6b7280; margin-top: 4px; }
+.pipe-stage-icon { font-size: 1.4rem; }
+.pipe-stage-name { font-size: 0.62rem; color: var(--accent-light); margin-top: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+.pipe-stage-sub { font-size: 0.58rem; color: var(--muted); margin-top: 2px; }
+.pipe-arrow {
+  width: 28px; flex-shrink: 0; text-align: center; font-size: 0.9rem;
+  color: var(--accent); position: relative;
+}
+.pipe-packet {
+  position: absolute; top: 50%; left: 0; transform: translateY(-50%);
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--green);
+  animation: flow 2.4s linear infinite;
+}
+.pipe-packet:nth-child(2) { animation-delay: 0.8s; }
+.pipe-packet:nth-child(3) { animation-delay: 1.6s; }
+@keyframes flow {
+  0%   { left: 0;   opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
 
-/* -- Two column layout -- */
-.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px 24px 0; }
+/* Detection demo canvas */
+#demo-canvas { width: 100%; border-radius: 8px; border: 1px solid var(--border); display: block; background: #080810; }
 
-/* -- Funnel -- */
-.section { background: #1a1a2e; border-radius: 12px; padding: 18px 20px; border: 1px solid #2d2d4e; }
-.section h2 { color: #a78bfa; margin-bottom: 14px; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; }
-.stage { display: flex; align-items: center; margin-bottom: 10px; gap: 10px; }
-.stage-label { width: 110px; font-size: 0.8rem; color: #c4b5fd; flex-shrink: 0; }
-.bar-wrap { flex: 1; background: #2d2d4e; border-radius: 4px; height: 22px; overflow: hidden; }
-.bar { height: 100%; background: linear-gradient(90deg, #7c3aed, #a78bfa); border-radius: 4px; transition: width 0.7s; }
-.stage-stat { width: 90px; text-align: right; font-size: 0.78rem; color: #e0e0f0; flex-shrink: 0; }
-.pct-badge { color: #6ee7b7; font-size: 0.7rem; margin-left: 4px; }
-.drop-badge { color: #f87171; font-size: 0.7rem; }
+/* Live event feed */
+.event-feed { max-height: 210px; overflow-y: auto; }
+.event-row {
+  display: flex; gap: 8px; align-items: center;
+  padding: 5px 0; border-bottom: 1px solid #1a1a2e; font-size: 0.72rem;
+  animation: fadeIn .4s ease;
+}
+@keyframes fadeIn { from { opacity:0; transform: translateX(-6px); } to { opacity:1; transform: none; } }
+.ev-badge {
+  font-size: 0.6rem; padding: 2px 6px; border-radius: 10px;
+  font-weight: 600; white-space: nowrap; flex-shrink: 0;
+}
+.ev-ENTRY   { background: #1a3a1a; color: var(--green); }
+.ev-EXIT    { background: #3a1a1a; color: var(--red); }
+.ev-ZONE_ENTER  { background: #1a1a3a; color: #93c5fd; }
+.ev-ZONE_EXIT   { background: #2a1a2a; color: #c4b5fd; }
+.ev-ZONE_DWELL  { background: #1a2a1a; color: #86efac; }
+.ev-BILLING_QUEUE_JOIN    { background: #2a1a0a; color: var(--yellow); }
+.ev-BILLING_QUEUE_ABANDON { background: #3a1a0a; color: #fb923c; }
+.ev-REENTRY { background: #1a2a3a; color: #7dd3fc; }
+.ev-visitor { color: var(--muted); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-conf { color: var(--muted); font-size: 0.6rem; flex-shrink: 0; }
+.ev-time { color: var(--muted); font-size: 0.6rem; flex-shrink: 0; width: 58px; text-align: right; }
 
-/* -- Anomalies -- */
-.anomaly { border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; border-left: 4px solid #6b7280; }
-.anomaly.CRITICAL { border-color: #ef4444; background: #1f0f0f; }
-.anomaly.WARN     { border-color: #f59e0b; background: #1f1a0a; }
-.anomaly.INFO     { border-color: #3b82f6; background: #0a0f1f; }
-.anomaly-title { font-size: 0.82rem; font-weight: 600; }
-.anomaly-action { font-size: 0.73rem; color: #9ca3af; margin-top: 3px; }
-.stale-group { border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; border-left: 4px solid #ef4444; background: #1f0f0f; }
-.stale-group .stale-title { font-size: 0.82rem; font-weight: 600; color: #fca5a5; margin-bottom: 6px; }
-.stale-cam { display: inline-block; background: #2d1515; border: 1px solid #ef444444; color: #fca5a5; font-size: 0.72rem; padding: 2px 8px; border-radius: 10px; margin: 2px; }
+/* ── Revenue row ─────────────────────────── */
+.rev-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 
-/* -- Heatmap -- */
-.heatmap-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-.zone-cell { background: #0f0f1a; border-radius: 10px; padding: 18px 16px; text-align: center; border: 1px solid #2d2d4e; }
-.zone-name { font-size: 0.75rem; color: #9ca3af; margin-bottom: 8px; letter-spacing: 0.5px; text-transform: uppercase; }
-.zone-score { font-size: 2.2rem; font-weight: 700; margin-bottom: 4px; }
-.zone-dwell { font-size: 0.72rem; color: #6b7280; }
-.zone-bar-wrap { background: #2d2d4e; border-radius: 3px; height: 4px; margin-top: 8px; }
-.zone-bar-fill { height: 4px; border-radius: 3px; transition: width 0.7s; }
+/* ── Recommendations ─────────────────────── */
+.reco-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.reco { border-radius: 10px; padding: 12px 16px; border: 1px solid var(--border); background: var(--surface); }
+.reco-label { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 6px; }
+.reco-text { font-size: 0.82rem; line-height: 1.4; }
 
-/* -- Charts -- */
-.charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px 24px 0; }
-.chart-box { background: #1a1a2e; border-radius: 12px; padding: 18px 20px; border: 1px solid #2d2d4e; }
-.chart-box h2 { color: #a78bfa; margin-bottom: 14px; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; }
-.chart-area { height: 120px; display: flex; align-items: flex-end; gap: 4px; }
-.bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.bar-col-fill { width: 100%; border-radius: 3px 3px 0 0; transition: height 0.7s; min-height: 2px; }
-.bar-col-label { font-size: 0.6rem; color: #4b5563; }
-.bar-col-val { font-size: 0.65rem; color: #9ca3af; }
-
-#last-update { padding: 12px 24px 20px; font-size: 0.72rem; color: #4b5563; }
+#footer { padding: 10px 24px 18px; font-size: 0.68rem; color: var(--muted); }
 </style>
 </head>
 <body>
 
-<!-- Header -->
+<!-- ── Header ───────────────────────────────────────────── -->
 <header>
-  <h1>🏪 Store Intelligence — Brigade Bangalore (STORE_BLR_002)</h1>
+  <h1>
+    <span class="pulse"></span>
+    Store Intelligence — Live Dashboard
+  </h1>
   <div class="header-right">
-    <div id="status">⟳ Connecting...</div>
-    <div class="date-badge">📅 Apr 10, 2026</div>
+    <select class="store-sel" id="store-sel" onchange="switchStore(this.value)">
+      <option value="">Loading stores…</option>
+    </select>
+    <span id="live-status">Connecting…</span>
   </div>
 </header>
 
-<!-- Business Insight Card -->
-<div class="insight-bar" id="insight-bar">
-  <div>
-    <div class="insight-title">North Star Metric</div>
-    <div class="insight-value" id="ins-conv">—</div>
-  </div>
-  <div class="insight-divider"></div>
-  <div>
-    <div class="insight-title">Drop-off Before Billing</div>
-    <div class="insight-value" id="ins-drop">—</div>
-  </div>
-  <div class="insight-divider"></div>
-  <div>
-    <div class="insight-title">Hottest Zone</div>
-    <div class="insight-value" id="ins-zone">—</div>
-  </div>
-  <div class="insight-divider"></div>
-  <div>
-    <div class="insight-title">Peak Sales Hour</div>
-    <div class="insight-value" id="ins-hour">—</div>
-  </div>
-  <div class="insight-action">
-    💡 <span>Action: </span><span id="ins-action">Loading...</span>
-  </div>
-</div>
+<div class="main">
 
-<!-- Business Recommendations -->
-<div style="margin:14px 24px 0; display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;" id="reco-grid">
-  <div style="background:#1a1a2e;border:1px solid #2d2d4e;border-left:4px solid #ef4444;border-radius:10px;padding:14px 16px;">
-    <div style="font-size:0.68rem;color:#7c7ca8;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">🔴 Urgent Action</div>
-    <div id="reco-1" style="font-size:0.85rem;color:#fca5a5;">Loading...</div>
-  </div>
-  <div style="background:#1a1a2e;border:1px solid #2d2d4e;border-left:4px solid #f59e0b;border-radius:10px;padding:14px 16px;">
-    <div style="font-size:0.68rem;color:#7c7ca8;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">🟡 Opportunity</div>
-    <div id="reco-2" style="font-size:0.85rem;color:#fcd34d;">Loading...</div>
-  </div>
-  <div style="background:#1a1a2e;border:1px solid #2d2d4e;border-left:4px solid #6ee7b7;border-radius:10px;padding:14px 16px;">
-    <div style="font-size:0.68rem;color:#7c7ca8;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">✅ Performing Well</div>
-    <div id="reco-3" style="font-size:0.85rem;color:#6ee7b7;">Loading...</div>
-  </div>
-</div>
-
-<!-- KPI Cards Row 1: Visitor metrics -->
-<div class="kpi-grid">
-  <div class="card"><h3>Unique Visitors</h3><div class="metric" id="m-visitors">—</div><div class="sub">Customers (staff excluded)</div></div>
-  <div class="card"><h3>Conversion Rate</h3><div class="metric" id="m-conv">—</div><div class="sub">Visitors → Purchase</div></div>
-  <div class="card"><h3>Queue Depth</h3><div class="metric" id="m-queue">—</div><div class="sub">Peak at billing today</div></div>
-  <div class="card"><h3>Abandonment Rate</h3><div class="metric" id="m-abandon">—</div><div class="sub">Left before purchase</div></div>
-  <div class="card"><h3>Active Anomalies</h3><div class="metric" id="m-anomalies">—</div><div class="sub">Requires attention</div></div>
-</div>
-
-<!-- KPI Cards Row 2: Revenue + Store Health -->
-<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;padding:12px 24px 0;">
-
-  <!-- Revenue Card -->
-  <div class="card" style="border-color:#6ee7b744;">
-    <h3>💰 Total Revenue</h3>
-    <div class="metric" id="m-revenue" style="color:#6ee7b7;">—</div>
-    <div class="sub">Avg basket: <span id="m-basket" style="color:#a78bfa;">—</span> · <span id="m-txns">—</span> transactions</div>
+  <!-- ── North Star Banner ──────────────────── -->
+  <div class="ns-banner">
+    <div class="ns-item">
+      <div class="ns-label">Conversion Rate (North Star)</div>
+      <div class="ns-value" id="ns-conv">—</div>
+    </div>
+    <div class="ns-divider"></div>
+    <div class="ns-item">
+      <div class="ns-label">Drop-off Before Billing</div>
+      <div class="ns-value" id="ns-drop">—</div>
+    </div>
+    <div class="ns-divider"></div>
+    <div class="ns-item">
+      <div class="ns-label">Hottest Zone</div>
+      <div class="ns-value" id="ns-zone">—</div>
+    </div>
+    <div class="ns-divider"></div>
+    <div class="ns-item">
+      <div class="ns-label">Total Events Processed</div>
+      <div class="ns-value" id="ns-events">—</div>
+    </div>
+    <div class="ns-action" id="ns-action">💡 Loading…</div>
   </div>
 
-  <!-- Revenue per visitor -->
-  <div class="card" style="border-color:#6ee7b744;">
-    <h3>📈 Revenue per Visitor</h3>
-    <div class="metric" id="m-rev-per-vis" style="color:#6ee7b7;">—</div>
-    <div class="sub">Total revenue ÷ unique visitors</div>
+  <!-- ── KPI Strip ──────────────────────────── -->
+  <div class="kpi-strip">
+    <div class="kpi">
+      <div class="kpi-label">Unique Visitors</div>
+      <div class="kpi-value" id="k-vis">—</div>
+      <div class="kpi-sub">Customers (staff excluded)</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Conversion Rate</div>
+      <div class="kpi-value" id="k-conv">—</div>
+      <div class="kpi-sub">Visitors who purchased</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Queue Depth (Peak)</div>
+      <div class="kpi-value" id="k-queue" style="color:var(--yellow)">—</div>
+      <div class="kpi-sub">Max at billing today</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Abandonment Rate</div>
+      <div class="kpi-value" id="k-abandon" style="color:var(--red)">—</div>
+      <div class="kpi-sub">Left billing before purchase</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Active Anomalies</div>
+      <div class="kpi-value" id="k-anom" style="color:var(--red)">—</div>
+      <div class="kpi-sub">Requires attention now</div>
+    </div>
   </div>
 
-  <!-- Store Health Card -->
-  <div class="card" style="border-color:#a78bfa44;" id="health-card">
-    <h3>🔧 Store Health</h3>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
-      <div>
-        <div style="font-size:0.68rem;color:#7c7ca8;">Camera Status</div>
-        <div style="font-size:0.9rem;font-weight:600;" id="h-cameras">—</div>
-      </div>
-      <div>
-        <div style="font-size:0.68rem;color:#7c7ca8;">Event Stream</div>
-        <div style="font-size:0.9rem;font-weight:600;" id="h-stream">—</div>
-      </div>
-      <div>
-        <div style="font-size:0.68rem;color:#7c7ca8;">Database</div>
-        <div style="font-size:0.9rem;font-weight:600;" id="h-db">—</div>
-      </div>
-      <div>
-        <div style="font-size:0.68rem;color:#7c7ca8;">Data Confidence</div>
-        <div style="font-size:0.9rem;font-weight:600;" id="h-confidence">—</div>
+  <!-- ── Revenue Row ──────────────────────── -->
+  <div class="rev-row">
+    <div class="card">
+      <div class="card-title">💰 Total Revenue Today</div>
+      <div style="font-size:1.8rem;font-weight:700;color:var(--green)" id="r-rev">—</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-top:4px"><span id="r-txns">—</span> transactions · avg basket <span id="r-basket" style="color:var(--accent-light)">—</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">📈 Revenue per Visitor</div>
+      <div style="font-size:1.8rem;font-weight:700;color:var(--green)" id="r-rpv">—</div>
+      <div style="font-size:0.72rem;color:var(--muted);margin-top:4px">Total revenue ÷ unique visitors</div>
+    </div>
+    <div class="card">
+      <div class="card-title">🔧 Store Health</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px">
+        <div><div style="font-size:0.62rem;color:var(--muted)">Camera Status</div><div id="h-cams" style="font-size:0.9rem;font-weight:600">—</div></div>
+        <div><div style="font-size:0.62rem;color:var(--muted)">Database</div><div id="h-db" style="font-size:0.9rem;font-weight:600">—</div></div>
+        <div><div style="font-size:0.62rem;color:var(--muted)">Data Confidence</div><div id="h-conf" style="font-size:0.9rem;font-weight:600">—</div></div>
+        <div><div style="font-size:0.62rem;color:var(--muted)">Feed Mode</div><div id="h-mode" style="font-size:0.9rem;font-weight:600">—</div></div>
       </div>
     </div>
   </div>
+
+  <!-- ── Funnel + Heatmap + Anomalies ─────── -->
+  <div class="three-col">
+
+    <div class="card">
+      <div class="card-title">Conversion Funnel (4-Stage)</div>
+      <div id="funnel-body"></div>
+      <div style="margin-top:10px;font-size:0.7rem;color:var(--muted)">
+        Overall: <span id="fn-overall" style="color:var(--green);font-weight:600">—</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Zone Heatmap (0–100)</div>
+      <div class="hm-grid" id="hm-grid"></div>
+      <div style="margin-top:8px;font-size:0.65rem;color:var(--muted)">
+        Confidence: <span id="hm-conf" style="color:var(--green)">—</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Active Anomalies</div>
+      <div id="anom-body"><p style="font-size:0.78rem;color:var(--muted)">No anomalies detected</p></div>
+    </div>
+
+  </div>
+
+  <!-- ── Charts Row ─────────────────────── -->
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">📊 Transactions by Hour</div>
+      <div class="chart-area" id="txn-chart"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">📍 Zone Engagement (CCTV Event Count)</div>
+      <div class="chart-area" id="zone-chart"></div>
+    </div>
+  </div>
+
+  <!-- ── Pipeline Demo + Live Event Feed ─── -->
+  <div class="demo-row">
+
+    <!-- Pipeline visualization + detection demo -->
+    <div class="card">
+      <div class="card-title">🎬 Live Detection Pipeline</div>
+
+      <!-- Animated pipeline flow -->
+      <div class="pipeline-viz" style="margin-bottom:12px">
+        <div class="pipe-stage">
+          <div class="pipe-stage-icon">📹</div>
+          <div class="pipe-stage-name">CCTV Clips</div>
+          <div class="pipe-stage-sub">1080p · 15fps</div>
+        </div>
+        <div class="pipe-arrow">
+          →
+          <div class="pipe-packet"></div>
+          <div class="pipe-packet"></div>
+          <div class="pipe-packet"></div>
+        </div>
+        <div class="pipe-stage" id="ps-detect">
+          <div class="pipe-stage-icon">🔍</div>
+          <div class="pipe-stage-name">YOLOv8n</div>
+          <div class="pipe-stage-sub">Person detect</div>
+        </div>
+        <div class="pipe-arrow">
+          →
+          <div class="pipe-packet"></div>
+          <div class="pipe-packet"></div>
+          <div class="pipe-packet"></div>
+        </div>
+        <div class="pipe-stage" id="ps-track">
+          <div class="pipe-stage-icon">🎯</div>
+          <div class="pipe-stage-name">IoU Track</div>
+          <div class="pipe-stage-sub">Re-ID · Groups</div>
+        </div>
+        <div class="pipe-arrow">
+          →
+          <div class="pipe-packet"></div>
+          <div class="pipe-packet"></div>
+          <div class="pipe-packet"></div>
+        </div>
+        <div class="pipe-stage" id="ps-api">
+          <div class="pipe-stage-icon">⚡</div>
+          <div class="pipe-stage-name">Events API</div>
+          <div class="pipe-stage-sub">8 event types</div>
+        </div>
+        <div class="pipe-arrow">
+          →
+          <div class="pipe-packet"></div>
+          <div class="pipe-packet"></div>
+          <div class="pipe-packet"></div>
+        </div>
+        <div class="pipe-stage" id="ps-dash">
+          <div class="pipe-stage-icon">📊</div>
+          <div class="pipe-stage-name">Dashboard</div>
+          <div class="pipe-stage-sub">Live metrics</div>
+        </div>
+      </div>
+
+      <!-- Simulated CCTV detection canvas -->
+      <canvas id="demo-canvas" height="180"></canvas>
+      <div style="margin-top:6px;font-size:0.65rem;color:var(--muted)">
+        ↑ Simulated retail CCTV scene — YOLOv8n bounding boxes, trajectory tracking, zone mapping
+      </div>
+    </div>
+
+    <!-- Live event feed -->
+    <div class="card">
+      <div class="card-title">
+        ⚡ Live Event Stream
+        <span id="feed-count" style="color:var(--accent-light);margin-left:8px">—</span>
+      </div>
+      <div class="event-feed" id="event-feed">
+        <p style="font-size:0.78rem;color:var(--muted)">Loading events…</p>
+      </div>
+      <div style="margin-top:8px;font-size:0.65rem;color:var(--muted)">
+        Showing most recent events · auto-refreshing every 5s
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Business Recommendations ─────────── -->
+  <div class="reco-row">
+    <div class="reco" style="border-left:3px solid var(--red)">
+      <div class="reco-label">🔴 Urgent Action</div>
+      <div class="reco-text" id="reco-1" style="color:#fca5a5">Loading…</div>
+    </div>
+    <div class="reco" style="border-left:3px solid var(--yellow)">
+      <div class="reco-label">🟡 Opportunity</div>
+      <div class="reco-text" id="reco-2" style="color:#fcd34d">Loading…</div>
+    </div>
+    <div class="reco" style="border-left:3px solid var(--green)">
+      <div class="reco-label">✅ Performing Well</div>
+      <div class="reco-text" id="reco-3" style="color:var(--green)">Loading…</div>
+    </div>
+  </div>
+
 </div>
 
-<!-- Top Insights -->
-<div style="margin:12px 24px 0;">
-  <div class="section">
-    <h2>🔍 Top Insights Today</h2>
-    <div id="insights-list" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px;"></div>
-  </div>
-</div>
+<div id="footer">Last updated: never · Purplle Tech Challenge 2026 — Store Intelligence System</div>
 
-<!-- Charts Row -->
-<div class="charts-row">
-  <div class="chart-box">
-    <h2>📊 Transactions by Hour</h2>
-    <div class="chart-area" id="txn-chart"></div>
-  </div>
-  <div class="chart-box">
-    <h2>📍 Zone Engagement (CCTV Events)</h2>
-    <div class="chart-area" id="zone-chart"></div>
-  </div>
-</div>
-
-<!-- Funnel + Heatmap -->
-<div class="two-col" style="padding-top:16px; padding-left:24px; padding-right:24px;">
-
-  <div class="section">
-    <h2>Conversion Funnel</h2>
-    <div id="funnel-stages"></div>
-  </div>
-
-  <div class="section">
-    <h2>Zone Heatmap</h2>
-    <div class="heatmap-grid" id="heatmap-grid"></div>
-  </div>
-
-</div>
-
-<!-- Anomalies -->
-<div style="padding: 16px 24px 0;">
-  <div class="section">
-    <h2>Active Anomalies</h2>
-    <div id="anomaly-list"><p style="color:#4b5563">No anomalies detected</p></div>
-  </div>
-</div>
-
-<div id="last-update">Last updated: never</div>
-
+<!-- ── Scripts ──────────────────────────────────────────── -->
 <script>
-const API = '';
-
-function heatColor(score) {
-  if (score >= 80) return '#ef4444';
-  if (score >= 50) return '#f59e0b';
-  if (score >= 20) return '#6ee7b7';
-  return '#4b5563';
+// ── Helpers ──────────────────────────────────────────────
+function heatColor(s) {
+  return s >= 80 ? '#ef4444' : s >= 50 ? '#f59e0b' : s >= 20 ? '#6ee7b7' : '#4b5563';
 }
+function fmt(n, dec=1) { return n != null ? Number(n).toFixed(dec) : '—'; }
+function inr(n) { return n > 0 ? '₹' + Math.round(n).toLocaleString('en-IN') : '—'; }
 
-function buildBarChart(containerId, data, key, color) {
-  const el = document.getElementById(containerId);
-  const max = Math.max(...data.map(d => d[key]), 1);
+function barChart(id, data, key, color) {
+  const el = document.getElementById(id);
+  if (!el || !data?.length) return;
+  const max = Math.max(...data.map(d => d[key] ?? 0), 1);
   el.innerHTML = data.map(d => {
     const h = Math.round((d[key] / max) * 100);
-    return `<div class="bar-col">
-      <div class="bar-col-val">${d[key] > 0 ? d[key] : ''}</div>
-      <div class="bar-col-fill" style="height:${h}px;background:${color};"></div>
-      <div class="bar-col-label">${d.label.replace(':00','')}</div>
+    const lbl = (d.label || d.zone_id || '').replace(':00','').replace('_',' ');
+    return `<div class="bc">
+      <div class="bc-val">${d[key] > 0 ? d[key] : ''}</div>
+      <div class="bc-fill" style="height:${h}px;background:${color}"></div>
+      <div class="bc-lbl">${lbl.slice(0,8)}</div>
     </div>`;
   }).join('');
 }
 
-async function refresh() {
-  try {
-    const d = await fetch(`${API}/api/summary`).then(r => r.json());
-    if (d.error) throw new Error(d.error);
-    const metrics     = d.metrics     ?? {};
-    const funnel      = d.funnel      ?? {};
-    const anomalies   = d.anomalies   ?? {};
-    const heatmap     = d.heatmap     ?? {};
-    const hourly      = d.hourly      ?? {};
-    const zoneVisits  = d.zone_visits ?? {};
-    const revenue     = d.revenue     ?? {};
-    const storeHealth = d.health      ?? {};
+// ── Canvas Detection Demo ─────────────────────────────────
+const canvas = document.getElementById('demo-canvas');
+const ctx = canvas.getContext('2d');
 
-    // -- KPIs --
-    const conv = (metrics.unique_visitors ?? 0) > 0 ? ((metrics.conversion_rate ?? 0) * 100).toFixed(1) : '0.0';
-    document.getElementById('m-visitors').textContent = metrics.unique_visitors ?? '—';
-    document.getElementById('m-conv').textContent = conv + '%';
-    document.getElementById('m-queue').textContent = metrics.current_queue_depth ?? 0;
-    document.getElementById('m-abandon').textContent = ((metrics.abandonment_rate ?? 0) * 100).toFixed(1) + '%';
-    document.getElementById('m-anomalies').textContent = anomalies.anomaly_count ?? 0;
+// Simulated persons walking through store zones
+const ZONES = [
+  { name: 'ENTRY',    x: 0.05,  y: 0.0,  w: 0.15, h: 1.0,  color: '#7c3aed33' },
+  { name: 'SKINCARE', x: 0.2,   y: 0.0,  w: 0.25, h: 1.0,  color: '#6ee7b733' },
+  { name: 'HAIRCARE', x: 0.45,  y: 0.0,  w: 0.25, h: 1.0,  color: '#a78bfa33' },
+  { name: 'BILLING',  x: 0.72,  y: 0.0,  w: 0.28, h: 1.0,  color: '#fbbf2433' },
+];
 
-    // -- Revenue Cards --
-    const rev = revenue.total_revenue_inr ?? 0;
-    const vis = metrics.unique_visitors ?? 1;
-    document.getElementById('m-revenue').textContent = rev > 0 ? '₹' + rev.toLocaleString('en-IN', {maximumFractionDigits:0}) : '—';
-    document.getElementById('m-basket').textContent  = rev > 0 ? '₹' + (revenue.avg_basket_inr ?? 0).toLocaleString('en-IN', {maximumFractionDigits:0}) : '—';
-    document.getElementById('m-txns').textContent    = (revenue.transaction_count ?? 0) + ' txns';
-    const revPerVis = vis > 0 && rev > 0 ? '₹' + Math.round(rev / vis).toLocaleString('en-IN') : '—';
-    document.getElementById('m-rev-per-vis').textContent = revPerVis;
-
-    // -- Store Health Card --
-    const stores    = storeHealth.stores ?? [];
-    const totalCams = 5;
-    const staleCams = (anomalies.anomalies ?? []).filter(a => a.type === 'STALE_CAMERA_FEED').length;
-    const onlineCams = totalCams - staleCams;
-    const camColor   = staleCams === 0 ? '#6ee7b7' : staleCams < 3 ? '#f59e0b' : '#ef4444';
-    document.getElementById('h-cameras').innerHTML    = `<span style="color:${camColor}">${onlineCams}/${totalCams} Online</span>`;
-    document.getElementById('h-stream').innerHTML     = `<span style="color:#6ee7b7">Healthy</span>`;
-    document.getElementById('h-db').innerHTML         = `<span style="color:${storeHealth.database === 'connected' ? '#6ee7b7' : '#ef4444'}">${storeHealth.database ?? '—'}</span>`;
-    document.getElementById('h-confidence').innerHTML = `<span style="color:#6ee7b7">${(heatmap.data_confidence ?? 'LOW')}</span>`;
-
-    // -- Top Insights --
-    const dropOff = funnel.funnel ? (100 - (funnel.funnel[2]?.visitors / funnel.funnel[0]?.visitors * 100)).toFixed(1) : '60';
-    const hotZone = heatmap.zones?.[0]?.zone_id ?? '—';
-    const hotZoneName = heatmap.zones?.[0]?.zone_id ?? 'SKINCARE';
-    const convNum     = parseFloat(conv);
-    const dropNum     = parseFloat(dropOff ?? '60');
-    const insights = [
-      { icon: convNum >= 35 ? '✅' : '⚠️',
-        text: `${conv}% conversion rate — ${convNum >= 35 ? 'beats' : 'below'} typical retail benchmark (~30%)`,
-        color: convNum >= 35 ? '#6ee7b7' : '#f59e0b' },
-      { icon: '📉',
-        text: `${isNaN(dropNum) ? 60 : dropNum.toFixed(1)}% of customers drop off before reaching billing`,
-        color: '#f87171' },
-      { icon: '🔥',
-        text: `${hotZoneName} drives highest zone engagement — prime cross-sell opportunity`,
-        color: '#a78bfa' },
-      { icon: '🧾',
-        text: `Avg basket ₹${(revenue.avg_basket_inr ?? 0).toLocaleString('en-IN', {maximumFractionDigits:0})} across ${revenue.transaction_count ?? 0} transactions today`,
-        color: '#6ee7b7' },
-    ];
-    document.getElementById('insights-list').innerHTML = insights.map(i =>
-      `<div style="background:#0f0f1a;border:1px solid #2d2d4e;border-radius:8px;padding:10px 14px;display:flex;gap:10px;align-items:flex-start;">
-        <span style="font-size:1rem">${i.icon}</span>
-        <span style="font-size:0.8rem;color:${i.color};line-height:1.4">${i.text}</span>
-      </div>`
-    ).join('');
-
-    // -- Business Insight Card --
-    
-    const peakH = (hourly.hourly ?? []).reduce((a, b) => b.transactions > a.transactions ? b : a, {transactions: 0, label: '—'});
-    document.getElementById('ins-conv').textContent = conv + '% Conversion Rate';
-    document.getElementById('ins-drop').textContent = dropOff + '% before billing';
-    document.getElementById('ins-zone').textContent = hotZone;
-    document.getElementById('ins-hour').textContent = peakH.label;
-
-    // Suggested action based on anomalies
-    const hasQueue = anomalies.anomalies?.some(a => a.type === 'BILLING_QUEUE_SPIKE');
-    const hasDead  = anomalies.anomalies?.some(a => a.type === 'DEAD_ZONE');
-    const action   = hasQueue ? 'Open extra billing counter to reduce queue' :
-                     hasDead  ? 'Redirect staff to dead zones to boost engagement' :
-                     'Monitor conversion — store performing normally';
-    document.getElementById('ins-action').textContent = action;
-
-    // -- Charts --
-    if (hourly.hourly) {
-      buildBarChart('txn-chart', hourly.hourly, 'transactions', '#7c3aed');
+class SimPerson {
+  constructor(id) {
+    this.id = id;
+    this.x = 0.05 + Math.random() * 0.02;
+    this.y = 0.2 + Math.random() * 0.6;
+    this.vx = 0.004 + Math.random() * 0.004;
+    this.vy = (Math.random() - 0.5) * 0.003;
+    this.w = 0.045 + Math.random() * 0.02;
+    this.h = 0.22 + Math.random() * 0.08;
+    this.conf = 0.82 + Math.random() * 0.17;
+    this.isStaff = id === 0;
+    this.color = this.isStaff ? '#f59e0b' : '#6ee7b7';
+    this.label = this.isStaff ? 'STAFF' : `VIS_${String(id).padStart(3,'0')}`;
+    this.active = true;
+    this.dwellTimer = 0;
+  }
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.dwellTimer++;
+    if (this.y < 0.1) this.vy = Math.abs(this.vy);
+    if (this.y + this.h > 0.9) this.vy = -Math.abs(this.vy);
+    if (this.x > 1.1) { this.active = false; }
+    // Slow down in skincare zone (dwell)
+    if (this.x > 0.2 && this.x < 0.45 && this.dwellTimer % 60 < 30) {
+      this.vx = 0.001;
+    } else {
+      this.vx = 0.004 + Math.random() * 0.002;
     }
-    // Zone engagement chart — real CCTV event counts per zone
-    if (zoneVisits.zones?.length) {
-      const el = document.getElementById('zone-chart');
-      const max = Math.max(...zoneVisits.zones.map(z => z.events), 1);
-      el.innerHTML = zoneVisits.zones.map(z => {
-        const h = Math.round((z.events / max) * 100);
-        const color = z.zone_id === 'BILLING' ? '#7c3aed' : '#6ee7b7';
-        return `<div class="bar-col">
-          <div class="bar-col-val">${z.events}</div>
-          <div class="bar-col-fill" style="height:${h}px;background:${color};"></div>
-          <div class="bar-col-label">${z.zone_id.replace('_',' ')}</div>
-        </div>`;
-      }).join('');
-    }
-
-    // -- Funnel with % --
-    const stage1 = funnel.funnel?.[0]?.visitors || 1;
-    document.getElementById('funnel-stages').innerHTML = (funnel.funnel ?? []).map(s => {
-      const pct = ((s.visitors / stage1) * 100).toFixed(0);
-      const isFirst = s.stage === 1;
-      return `<div class="stage">
-        <div class="stage-label">${s.stage}. ${s.label}</div>
-        <div class="bar-wrap"><div class="bar" style="width:${pct}%"></div></div>
-        <div class="stage-stat">
-          ${s.visitors}
-          <span class="pct-badge">${pct}%</span>
-          ${!isFirst && s.drop_off_pct > 0 ? `<br><span class="drop-badge">-${s.drop_off_pct}%</span>` : ''}
-        </div>
-      </div>`;
-    }).join('');
-
-    // -- Heatmap (bigger cards) --
-    document.getElementById('heatmap-grid').innerHTML = (heatmap.zones ?? []).map(z => {
-      const color = heatColor(z.frequency_score);
-      const dwell = z.avg_dwell_ms > 0 ? (z.avg_dwell_ms / 1000).toFixed(1) + 's dwell' : 'no dwell data';
-      return `<div class="zone-cell">
-        <div class="zone-name">${z.zone_id}</div>
-        <div class="zone-score" style="color:${color}">${z.frequency_score}</div>
-        <div class="zone-dwell">${dwell} · ${z.unique_visitors ?? 0} visitors</div>
-        <div class="zone-bar-wrap">
-          <div class="zone-bar-fill" style="width:${z.frequency_score}%;background:${color}"></div>
-        </div>
-      </div>`;
-    }).join('') || '<p style="color:#4b5563">No zone data</p>';
-
-    // -- Anomalies (grouped STALE_CAMERA_FEED) --
-    const stale = (anomalies.anomalies ?? []).filter(a => a.type === 'STALE_CAMERA_FEED');
-    const others = (anomalies.anomalies ?? []).filter(a => a.type !== 'STALE_CAMERA_FEED');
-    let html = '';
-
-    others.forEach(a => {
-      html += `<div class="anomaly ${a.severity}">
-        <div class="anomaly-title">[${a.severity}] ${a.type}</div>
-        <div class="anomaly-action">💡 ${a.suggested_action}</div>
-      </div>`;
-    });
-
-    if (stale.length > 0) {
-      const camNames = stale.map(a => a.details?.camera_id ?? a.description?.match(/Camera (\\S+)/)?.[1] ?? 'Unknown');
-      html += `<div class="stale-group">
-        <div class="stale-title">[CRITICAL] STALE_CAMERA_FEED — ${stale.length} camera${stale.length > 1 ? 's' : ''} offline</div>
-        ${camNames.map(c => `<span class="stale-cam">📷 ${c}</span>`).join('')}
-        <div class="anomaly-action" style="margin-top:8px">💡 Check camera connectivity and restart feed if necessary</div>
-      </div>`;
-    }
-
-    document.getElementById('anomaly-list').innerHTML = html || '<p style="color:#4b5563">No anomalies detected</p>';
-
-    // -- Business Recommendations --
-    const conv_num = parseFloat(conv);
-    const queueDepth = metrics.current_queue_depth ?? 0;
-    const recommendationZone = heatmap.zones?.[0]?.zone_id ?? 'product zone';
-
-    const reco1 = queueDepth >= 5
-      ? `Queue depth reached ${queueDepth} — open a second billing counter now`
-      : conv_num < 25
-      ? `Conversion at ${conv}% — investigate why ${(100-conv_num).toFixed(1)}% leave without buying`
-      : `Monitor queue depth — currently ${queueDepth} (healthy)`;
-
-    const reco2 =
-`${(100 - parseFloat(dropOff)).toFixed(1)}% of visitors reach ${recommendationZone} — consider cross-selling here`;
-
-
-
-    const reco3 = conv_num >= 30
-      ? `${conv}% conversion beats typical retail (~20%) — ${recommendationZone} display is working`
-      : `${recommendationZone} drives most engagement — reinforce with promotions`;
-
-    document.getElementById('reco-1').textContent = reco1;
-    document.getElementById('reco-2').textContent = reco2;
-    document.getElementById('reco-3').textContent = reco3;
-
-    // -- Mode indicator --
-    const hasHistoricalStale = (anomalies.anomalies ?? []).some(
-      a => a.type === 'STALE_CAMERA_FEED' && a.details?.mode === 'historical'
-    );
-    document.getElementById('status').textContent = hasHistoricalStale
-      ? '📼 Historical Replay — Apr 10, 2026'
-      : '✓ Live';
-    document.getElementById('status').style.color = hasHistoricalStale ? '#a78bfa' : '#6ee7b7';
-    document.getElementById('last-update').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
-  } catch(e) {
-    document.getElementById('status').textContent = '⟳ Reconnecting...';
-    document.getElementById('status').style.color = '#f59e0b';
+  }
+  draw(cw, ch) {
+    const px = this.x * cw, py = this.y * ch;
+    const pw = this.w * cw, ph = this.h * ch;
+    // Bounding box
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(px, py, pw, ph);
+    // Label background
+    ctx.fillStyle = this.color + 'cc';
+    const lblW = 80, lblH = 14;
+    ctx.fillRect(px, py - lblH, lblW, lblH);
+    // Label text
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 9px monospace';
+    ctx.fillText(`${this.label} ${fmt(this.conf,2)}`, px + 2, py - 3);
+    // Confidence bar
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(px, py + ph + 1, pw, 3);
+    ctx.fillStyle = this.color;
+    ctx.fillRect(px, py + ph + 1, pw * this.conf, 3);
+    // Trajectory dot trail
+    ctx.fillStyle = this.color + '88';
+    ctx.beginPath();
+    ctx.arc(px + pw/2, py + ph/2, 2, 0, Math.PI*2);
+    ctx.fill();
   }
 }
 
-refresh();
-setInterval(refresh, 15000); // 15s — one combined API call, data is batch-loaded
+let simPersons = [];
+let simFrame = 0;
+let eventLog = [];
+
+function spawnPerson() {
+  if (simPersons.filter(p => p.active).length < 5) {
+    simPersons.push(new SimPerson(simPersons.length));
+  }
+}
+
+function drawDemo() {
+  const cw = canvas.width, ch = canvas.height;
+  ctx.clearRect(0, 0, cw, ch);
+
+  // Background
+  ctx.fillStyle = '#080814';
+  ctx.fillRect(0, 0, cw, ch);
+
+  // Draw zones
+  ZONES.forEach(z => {
+    ctx.fillStyle = z.color;
+    ctx.fillRect(z.x * cw, z.y * ch, z.w * cw, z.h * ch);
+    ctx.fillStyle = '#ffffff33';
+    ctx.font = '9px monospace';
+    ctx.fillText(z.name, z.x * cw + 4, ch - 8);
+  });
+
+  // Grid lines
+  ctx.strokeStyle = '#ffffff11';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < cw; x += 40) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ch); ctx.stroke();
+  }
+
+  // Update + draw persons
+  simFrame++;
+  if (simFrame % 40 === 0) spawnPerson();
+  simPersons = simPersons.filter(p => p.active || simPersons.length > 10);
+  simPersons.forEach(p => { if (p.active) { p.update(); p.draw(cw, ch); } });
+
+  // Frame counter
+  ctx.fillStyle = '#ffffff44';
+  ctx.font = '9px monospace';
+  ctx.fillText(`frame: ${simFrame} | detections: ${simPersons.filter(p=>p.active).length} | YOLOv8n conf≥0.35`, 4, 12);
+
+  requestAnimationFrame(drawDemo);
+}
+
+// Size canvas to container
+function resizeCanvas() {
+  canvas.width  = canvas.offsetWidth;
+  canvas.height = 180;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+spawnPerson(); spawnPerson();
+drawDemo();
+
+// ── Store switching ───────────────────────────────────────
+let currentStore = '';
+
+async function loadStores() {
+  try {
+    const h = await fetch('/api/store-health').then(r => r.json());
+    const stores = (h.stores || []).filter(s => s.total_events > 0);
+    const sel = document.getElementById('store-sel');
+    const labels = { 'STORE_BLR_002': 'Brigade Bangalore', 'STORE_BLR_001': 'Store 1 Bangalore' };
+    if (!stores.length) {
+      sel.innerHTML = '<option>No data — run pipeline first</option>'; return;
+    }
+    sel.innerHTML = stores.map((s, i) =>
+      `<option value="${s.store_id}"${i===0?' selected':''}>${labels[s.store_id]||s.store_id} (${s.total_events.toLocaleString()} events)</option>`
+    ).join('');
+    currentStore = stores[0].store_id;
+    document.getElementById('ns-events').textContent =
+      stores.reduce((a, s) => a + s.total_events, 0).toLocaleString();
+    refresh();
+    setInterval(refresh, 5000);
+  } catch(e) {
+    document.getElementById('live-status').textContent = 'API offline';
+    document.getElementById('live-status').style.color = 'var(--red)';
+  }
+}
+
+function switchStore(id) { if (id) { currentStore = id; refresh(); } }
+
+// ── Main refresh ──────────────────────────────────────────
+async function refresh() {
+  if (!currentStore) return;
+  try {
+    const [metrics, funnel, anomalies, heatmap, hourly, zoneVisits, revenue, health, recentEvts] = await Promise.all([
+      fetch(`/api/metrics?store=${currentStore}`).then(r=>r.json()),
+      fetch(`/api/funnel?store=${currentStore}`).then(r=>r.json()),
+      fetch(`/api/anomalies?store=${currentStore}`).then(r=>r.json()),
+      fetch(`/api/heatmap?store=${currentStore}`).then(r=>r.json()),
+      fetch(`/api/hourly?store=${currentStore}`).then(r=>r.json()),
+      fetch(`/api/zone-visits?store=${currentStore}`).then(r=>r.json()),
+      fetch(`/api/revenue?store=${currentStore}`).then(r=>r.json()),
+      fetch('/api/store-health').then(r=>r.json()),
+      fetch(`/api/recent-events?store=${currentStore}`).then(r=>r.json()),
+    ]);
+
+    const vis  = metrics.unique_visitors ?? 0;
+    const conv = vis > 0 ? fmt((metrics.conversion_rate ?? 0) * 100) + '%' : '0.0%';
+    const anom = anomalies.anomaly_count ?? 0;
+
+    // KPIs
+    document.getElementById('k-vis').textContent    = vis;
+    document.getElementById('k-conv').textContent   = conv;
+    document.getElementById('k-queue').textContent  = metrics.current_queue_depth ?? 0;
+    document.getElementById('k-abandon').textContent = fmt((metrics.abandonment_rate ?? 0) * 100) + '%';
+    document.getElementById('k-anom').textContent   = anom;
+
+    // North Star
+    const stage1 = funnel.funnel?.[0]?.visitors || 1;
+    const stage3 = funnel.funnel?.[2]?.visitors || 0;
+    const dropBilling = fmt((1 - stage3/stage1) * 100) + '%';
+    const hotZone = heatmap.zones?.[0]?.zone_id ?? '—';
+    document.getElementById('ns-conv').textContent = conv + ' Conversion';
+    document.getElementById('ns-drop').textContent = dropBilling + ' before billing';
+    document.getElementById('ns-zone').textContent = hotZone;
+
+    // North Star action
+    const hasQ  = anomalies.anomalies?.some(a => a.type === 'BILLING_QUEUE_SPIKE');
+    const hasDZ = anomalies.anomalies?.some(a => a.type === 'DEAD_ZONE');
+    const nsAct = hasQ  ? '🚨 Open extra billing counter — queue spike detected'
+                : hasDZ ? '🔍 Redirect staff to dead zone to boost engagement'
+                : '✅ Store operating normally — monitor conversion';
+    document.getElementById('ns-action').textContent = nsAct;
+
+    // Revenue
+    const rev = revenue.total_revenue_inr ?? 0;
+    document.getElementById('r-rev').textContent   = inr(rev);
+    document.getElementById('r-txns').textContent  = (revenue.transaction_count ?? 0) + ' txns';
+    document.getElementById('r-basket').textContent = inr(revenue.avg_basket_inr);
+    document.getElementById('r-rpv').textContent    = vis > 0 && rev > 0 ? inr(rev/vis) : '—';
+
+    // Health
+    const staleCams = (anomalies.anomalies ?? []).filter(a => a.type === 'STALE_CAMERA_FEED').length;
+    const totalCams = 4;
+    const camColor = staleCams === 0 ? 'var(--green)' : staleCams < 2 ? 'var(--yellow)' : 'var(--red)';
+    document.getElementById('h-cams').innerHTML  = `<span style="color:${camColor}">${totalCams-staleCams}/${totalCams} online</span>`;
+    document.getElementById('h-db').innerHTML    = `<span style="color:var(--green)">${health.database ?? 'connected'}</span>`;
+    document.getElementById('h-conf').innerHTML  = `<span style="color:var(--green)">${heatmap.data_confidence ?? 'LOW'}</span>`;
+    const isHist = (anomalies.anomalies ?? []).some(a => a.details?.mode === 'historical');
+    document.getElementById('h-mode').innerHTML  = isHist
+      ? '<span style="color:var(--accent-light)">📼 Replay</span>'
+      : '<span style="color:var(--green)">🔴 Live</span>';
+
+    // Funnel
+    document.getElementById('funnel-body').innerHTML = (funnel.funnel ?? []).map(s => {
+      const pct = fmt(s.visitors / Math.max(stage1, 1) * 100, 0);
+      return `<div class="funnel-stage">
+        <div class="fn-label">${s.stage}. ${s.label}</div>
+        <div class="fn-bar-wrap"><div class="fn-bar" style="width:${pct}%"></div></div>
+        <div class="fn-stat">
+          ${s.visitors}
+          <span class="fn-pct">${pct}%</span>
+          ${s.stage > 1 && s.drop_off_pct > 0 ? `<br><span class="fn-drop">-${fmt(s.drop_off_pct)}%</span>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    document.getElementById('fn-overall').textContent = funnel.overall_conversion_pct != null
+      ? fmt(funnel.overall_conversion_pct, 1) + '% overall' : '—';
+
+    // Heatmap
+    document.getElementById('hm-grid').innerHTML = (heatmap.zones ?? []).slice(0, 6).map(z => {
+      const c = heatColor(z.frequency_score);
+      const dwell = z.avg_dwell_ms > 0 ? fmt(z.avg_dwell_ms/1000, 1)+'s' : '—';
+      return `<div class="hm-cell">
+        <div class="hm-zone">${z.zone_id}</div>
+        <div class="hm-score" style="color:${c}">${z.frequency_score}</div>
+        <div class="hm-dwell">${dwell} dwell · ${z.unique_visitors ?? 0} visitors</div>
+        <div class="hm-bar"><div class="hm-bar-fill" style="width:${z.frequency_score}%;background:${c}"></div></div>
+      </div>`;
+    }).join('') || '<p style="font-size:.78rem;color:var(--muted)">No zone data</p>';
+    document.getElementById('hm-conf').textContent = heatmap.data_confidence ?? 'LOW';
+
+    // Anomalies
+    const staleA = (anomalies.anomalies ?? []).filter(a => a.type === 'STALE_CAMERA_FEED');
+    const otherA = (anomalies.anomalies ?? []).filter(a => a.type !== 'STALE_CAMERA_FEED');
+    let anomHTML = otherA.map(a =>
+      `<div class="anom ${a.severity}">
+        <div class="anom-type">[${a.severity}] ${a.type}</div>
+        <div class="anom-action">💡 ${a.suggested_action}</div>
+      </div>`).join('');
+    if (staleA.length > 0) {
+      const cams = staleA.map(a => a.details?.camera_id ?? '?').join(', ');
+      anomHTML += `<div class="anom CRITICAL">
+        <div class="anom-type">[CRITICAL] STALE_CAMERA_FEED × ${staleA.length}</div>
+        <div class="anom-action">📷 ${cams} — check connectivity</div>
+      </div>`;
+    }
+    document.getElementById('anom-body').innerHTML = anomHTML ||
+      '<p style="font-size:.78rem;color:var(--muted)">No anomalies detected</p>';
+
+    // Charts
+    barChart('txn-chart', hourly.hourly ?? [], 'transactions', 'var(--accent)');
+    barChart('zone-chart', (zoneVisits.zones ?? []).slice(0, 10), 'events', 'var(--green)');
+
+    // Live event feed
+    const evts = recentEvts.events ?? [];
+    document.getElementById('feed-count').textContent = `${recentEvts.total ?? 0} events shown`;
+    document.getElementById('event-feed').innerHTML = evts.map(e => {
+      const t = (e.timestamp || '').slice(11, 19);
+      const zone = e.zone_id ? ` → ${e.zone_id}` : '';
+      const staff = e.is_staff ? ' [STAFF]' : '';
+      return `<div class="event-row">
+        <span class="ev-badge ev-${e.event_type}">${e.event_type.replace('_',' ')}</span>
+        <span class="ev-visitor">${e.visitor_id}${zone}${staff}</span>
+        <span class="ev-conf">${fmt(e.confidence,2)}</span>
+        <span class="ev-time">${t}</span>
+      </div>`;
+    }).join('') || '<p style="font-size:.78rem;color:var(--muted)">No events yet</p>';
+
+    // Recommendations
+    const queueD  = metrics.current_queue_depth ?? 0;
+    const convNum = parseFloat(conv);
+    const abandNum = (metrics.abandonment_rate ?? 0) * 100;
+    document.getElementById('reco-1').textContent =
+      queueD >= 5 ? `Queue depth ${queueD} — open second billing counter now` :
+      convNum < 20 ? `Conversion ${conv} — investigate why ${fmt(100-convNum)}% leave without buying` :
+      abandNum > 50 ? `${fmt(abandNum)}% abandonment — reduce checkout friction` :
+      `All metrics healthy — queue at ${queueD} (normal)`;
+
+    document.getElementById('reco-2').textContent =
+      `${hotZone} gets most engagement — prime cross-sell opportunity with bundled offers`;
+
+    document.getElementById('reco-3').textContent =
+      convNum >= 30 ? `${conv} conversion exceeds ~20% retail avg — ${hotZone} display working` :
+      `${hotZone} driving zone visits — reinforce with targeted promotions`;
+
+    // Live status
+    document.getElementById('live-status').textContent = isHist
+      ? '📼 Historical — Apr 10, 2026' : '🔴 Live';
+    document.getElementById('live-status').style.color = isHist ? 'var(--accent-light)' : 'var(--green)';
+    document.getElementById('footer').textContent =
+      `Last updated: ${new Date().toLocaleTimeString()} · Purplle Tech Challenge 2026 — Store Intelligence System`;
+
+  } catch(e) {
+    document.getElementById('live-status').textContent = '⟳ Reconnecting…';
+    document.getElementById('live-status').style.color = 'var(--yellow)';
+    console.error(e);
+  }
+}
+
+loadStores();
 </script>
 </body>
 </html>"""
@@ -510,8 +788,9 @@ def dashboard():
 
 @app.route("/api/metrics")
 def proxy_metrics():
+    sid = _store_from_request()
     try:
-        r = requests.get(f"{API_URL}/stores/{STORE_ID}/metrics?date={DATA_DATE}", timeout=5)
+        r = requests.get(f"{API_URL}/stores/{sid}/metrics?date={DATA_DATE}", timeout=5)
         return jsonify(r.json())
     except Exception as e:
         return jsonify({"error": str(e)}), 503
@@ -519,8 +798,9 @@ def proxy_metrics():
 
 @app.route("/api/funnel")
 def proxy_funnel():
+    sid = _store_from_request()
     try:
-        r = requests.get(f"{API_URL}/stores/{STORE_ID}/funnel?date={DATA_DATE}", timeout=5)
+        r = requests.get(f"{API_URL}/stores/{sid}/funnel?date={DATA_DATE}", timeout=5)
         return jsonify(r.json())
     except Exception as e:
         return jsonify({"error": str(e)}), 503
@@ -528,8 +808,9 @@ def proxy_funnel():
 
 @app.route("/api/anomalies")
 def proxy_anomalies():
+    sid = _store_from_request()
     try:
-        r = requests.get(f"{API_URL}/stores/{STORE_ID}/anomalies?date={DATA_DATE}", timeout=5)
+        r = requests.get(f"{API_URL}/stores/{sid}/anomalies?date={DATA_DATE}", timeout=5)
         return jsonify(r.json())
     except Exception as e:
         return jsonify({"error": str(e)}), 503
@@ -537,8 +818,9 @@ def proxy_anomalies():
 
 @app.route("/api/heatmap")
 def proxy_heatmap():
+    sid = _store_from_request()
     try:
-        r = requests.get(f"{API_URL}/stores/{STORE_ID}/heatmap?date={DATA_DATE}", timeout=5)
+        r = requests.get(f"{API_URL}/stores/{sid}/heatmap?date={DATA_DATE}", timeout=5)
         return jsonify(r.json())
     except Exception as e:
         return jsonify({"error": str(e)}), 503
@@ -546,8 +828,9 @@ def proxy_heatmap():
 
 @app.route("/api/hourly")
 def proxy_hourly():
+    sid = _store_from_request()
     try:
-        r = requests.get(f"{API_URL}/stores/{STORE_ID}/hourly?date={DATA_DATE}", timeout=5)
+        r = requests.get(f"{API_URL}/stores/{sid}/hourly?date={DATA_DATE}", timeout=5)
         return jsonify(r.json())
     except Exception as e:
         return jsonify({"error": str(e)}), 503
@@ -555,8 +838,9 @@ def proxy_hourly():
 
 @app.route("/api/zone-visits")
 def proxy_zone_visits():
+    sid = _store_from_request()
     try:
-        r = requests.get(f"{API_URL}/stores/{STORE_ID}/zone-visits?date={DATA_DATE}", timeout=5)
+        r = requests.get(f"{API_URL}/stores/{sid}/zone-visits?date={DATA_DATE}", timeout=5)
         return jsonify(r.json())
     except Exception as e:
         return jsonify({"error": str(e)}), 503
@@ -564,8 +848,9 @@ def proxy_zone_visits():
 
 @app.route("/api/revenue")
 def proxy_revenue():
+    sid = _store_from_request()
     try:
-        r = requests.get(f"{API_URL}/stores/{STORE_ID}/revenue?date={DATA_DATE}", timeout=5)
+        r = requests.get(f"{API_URL}/stores/{sid}/revenue?date={DATA_DATE}", timeout=5)
         return jsonify(r.json())
     except Exception as e:
         return jsonify({"error": str(e)}), 503
@@ -580,13 +865,25 @@ def proxy_store_health():
         return jsonify({"error": str(e)}), 503
 
 
-@app.route("/api/summary")
-def proxy_summary():
-    """Single cached call — all dashboard data in one request."""
+@app.route("/api/recent-events")
+def proxy_recent_events():
+    sid = _store_from_request()
     try:
-        return jsonify(_cached_summary())
+        url = f"{API_URL}/events/recent?limit=25"
+        if sid:
+            url += f"&store_id={sid}"
+        r = requests.get(url, timeout=5)
+        return jsonify(r.json())
     except Exception as e:
-        return jsonify({"error": str(e)}), 503
+        return jsonify({"error": str(e), "events": [], "total": 0}), 503
+
+
+@app.route("/api/stores")
+def list_stores():
+    return jsonify({"stores": [
+        {"id": "STORE_BLR_002", "name": "Brigade Bangalore"},
+        {"id": "STORE_BLR_001", "name": "Store 1 Bangalore"},
+    ]})
 
 
 if __name__ == "__main__":

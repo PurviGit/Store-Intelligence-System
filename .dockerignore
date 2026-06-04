@@ -1,0 +1,32 @@
+# Video files — large, not needed in container (pipeline runs on host)
+*.mp4
+*.avi
+*.mov
+*.mkv
+data/Store 1/
+data/Store 2/
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Test DB artifacts
+test_*.db
+*.db-shm
+*.db-wal
+.pytest_cache/
+
+# Git
+.git/
+
+# Docs images
+docs/*.png
+docs/*.jpg
+
+# Dockerfile for pipeline (not needed in API container)
+Dockerfile.pipeline
+
+# Dataset resource files provided by challenge (not needed in container)
+data/POS*sample*.csv
+data/sample_events*.jsonl

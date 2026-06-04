@@ -4,12 +4,13 @@ from sqlalchemy import func, distinct
 from database import get_db
 from models import EventORM
 from datetime import datetime, timezone
+from metrics import _latest_event_date
 from typing import Optional
 import json, os
 
 router = APIRouter()
 
-# Load zone metadata from store_layout.json
+# Load zone metadata from store_layout.json (multi-store format)
 def _load_zone_meta() -> dict:
     candidates = [
         os.path.join(os.path.dirname(__file__), "..", "data", "store_layout.json"),
@@ -20,6 +21,13 @@ def _load_zone_meta() -> dict:
         if os.path.exists(p):
             with open(p) as f:
                 layout = json.load(f)
+            # Handle both single-store {zones:[]} and multi-store {stores:[{zones:[]}]}
+            if "stores" in layout:
+                result = {}
+                for store in layout["stores"]:
+                    for z in store.get("zones", []):
+                        result[z["zone_id"]] = z
+                return result
             return {z["zone_id"]: z for z in layout.get("zones", [])}
     return {}
 
@@ -36,8 +44,9 @@ def get_heatmap(
     Zone visit frequency + avg dwell, normalised 0-100.
     Includes data_confidence flag if fewer than 20 sessions in window.
     """
-    date_str = date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date_str = date or _latest_event_date(db, store_id)
 
+    # Include billing zone events (BILLING_QUEUE_JOIN) alongside product zones
     rows = db.query(
         EventORM.zone_id,
         func.count(distinct(EventORM.visitor_id)).label("unique_visitors"),
@@ -45,9 +54,13 @@ def get_heatmap(
         func.avg(EventORM.dwell_ms).label("avg_dwell_ms"),
     ).filter(
         EventORM.store_id == store_id,
-        EventORM.event_type.in_(["ZONE_ENTER", "ZONE_DWELL", "ZONE_EXIT"]),
+        EventORM.event_type.in_([
+            "ZONE_ENTER", "ZONE_DWELL", "ZONE_EXIT",
+            "BILLING_QUEUE_JOIN",  # billing zone footfall
+        ]),
         EventORM.is_staff == False,
         EventORM.zone_id.isnot(None),
+        EventORM.zone_id != "ENTRY_THRESHOLD",  # exclude entry threshold
         EventORM.timestamp.like(f"{date_str}%"),
     ).group_by(EventORM.zone_id).all()
 
