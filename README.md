@@ -65,18 +65,34 @@ docker compose up --build
 
 ## Dynamic Verification
 
+Proves the API computes from ingested events, not hardcoded values.
+Uses `DATE = "2026-04-10"` — the same date as the CCTV dataset — so DEMO stores appear
+correctly in the dashboard alongside Store 1 and Store 2.
+
 ```bash
 python demo_dynamic.py http://localhost:9000
 ```
 
 Expected output:
+```
+[INFO] Dynamic Computation Proof
+[INFO] Test store: DEMO_DYNAMIC_<random>
+[INFO] (Fresh store — no pre-ingested data)
 
+[PASS] 1. Fresh store metrics returns 200
+[PASS] 2. Fresh store unique_visitors starts at 0
+[PASS] 6. unique_visitors is now exactly 5      ← responds to new events
+[PASS] 9. unique_visitors still 5 after idempotent re-submit
+[PASS] 11. BILLING_QUEUE_SPIKE anomaly detected from new events
+[PASS] 16. Stage 1 = 5 (REENTRY did not double-count)
+[PASS] 18. Staff event does not increase unique_visitors
+
+Results: 20 passed, 0 failed
 ✓ All checks passed — metrics compute dynamically from events.
-The API does NOT serve pre-baked/hardcoded values.
+```
 
-````
-
-> Each run uses a random store ID — metrics always start at zero and respond to what you inject.
+> Each run creates a fresh random store ID dated 2026-04-10.
+> DEMO stores appear in the dashboard store switcher with correct metrics.
 
 ## Running the Detection Pipeline
 
