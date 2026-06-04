@@ -198,6 +198,8 @@ def get_summary(store_id: str, date: str = "2026-04-10",
     from models import EventORM
     from sqlalchemy import func
 
+    resolved_date = date  # "2026-04-10" — the CCTV clip recording date
+
     now = datetime.now(timezone.utc)
     stale_cutoff = (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
     db_ok = check_db_health()
@@ -208,13 +210,13 @@ def get_summary(store_id: str, date: str = "2026-04-10",
     ).group_by(EventORM.store_id).all()
 
     return {
-        "metrics":     get_metrics(store_id, date, db),
-        "funnel":      get_funnel(store_id, date, db),
-        "heatmap":     get_heatmap(store_id, date, db),
-        "anomalies":   get_anomalies(store_id, date, db),
-        "hourly":      get_hourly(store_id, date, db),
-        "revenue":     get_revenue(store_id, date, db),
-        "zone_visits": get_zone_visits(store_id, date, db),
+        "metrics":     get_metrics(store_id, resolved_date, db),
+        "funnel":      get_funnel(store_id, resolved_date, db),
+        "heatmap":     get_heatmap(store_id, resolved_date, db),
+        "anomalies":   get_anomalies(store_id, resolved_date, db),
+        "hourly":      get_hourly(store_id, resolved_date, db),
+        "revenue":     get_revenue(store_id, resolved_date, db),
+        "zone_visits": get_zone_visits(store_id, resolved_date, db),
         "health": {
             "status":   "healthy" if db_ok else "degraded",
             "database": "connected" if db_ok else "unavailable",
@@ -240,5 +242,6 @@ def root():
             "GET /stores/{id}/heatmap",
             "GET /stores/{id}/anomalies",
             "GET /health",
+            "GET /metrics/prometheus",
         ],
     }

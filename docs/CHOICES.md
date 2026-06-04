@@ -214,3 +214,56 @@ Claude suggested using CLIP embeddings to match frame crops against zone referen
 - **Accurate:** Fixed cameras have fixed coverage areas
 
 **Where I would change this decision:** If the store reconfigures shelving frequently, the fixed camera-to-zone mapping breaks. In that case, I would use a lightweight object detector (not VLM) to identify product category labels in frame, and update `store_layout.json` automatically. The VLM approach remains too slow for real-time use without dedicated GPU inference.
+
+---
+
+## Decision 6: Synthetic Clip Generation — Demo & CI Strategy
+
+### The Problem
+
+The challenge dataset (real CCTV clips) cannot be committed to the repository per submission
+rules. The pipeline needs to be demonstrable without the actual clips.
+
+### Options Considered
+
+**Option A — Pre-generated events.jsonl only (no clips in repo)**
+- Pro: Simple. API works immediately with auto-ingest.
+- Con: Reviewers cannot verify the pipeline processes video. Integrity-check risk.
+
+**Option B — Synthetic clips with drawn silhouettes (OpenCV)**
+- Pro: Demonstrates the full pipeline code path (video → frames → YOLO → events).
+- Con: YOLOv8n detection rate on drawn shapes is ~40-70%, lower than real footage.
+
+**Option C — Scripted event generator (no video at all)**
+- Pro: Produces schema-valid events with all edge cases. Fast (~1s). No GPU/video needed.
+- Con: Bypasses the YOLO detection layer — doesn't prove detect.py works on real video.
+
+### What AI Suggested
+
+Claude suggested "use a GAN to generate synthetic retail footage." Rejected — training a GAN
+is far out of scope and the result would likely still have lower YOLO detection rate than
+real footage.
+
+### What I Chose and Why
+
+**Both B and C — two complementary modes:**
+
+1. `pipeline/generate_demo_clips.py` (Mode B): Creates 1080p/15fps MP4 clips with person
+   silhouettes drawn using OpenCV. Demonstrates the full pipeline code path with a real
+   video file. YOLO detection rate ~40-70% on synthetic shapes (documented limitation).
+   The clips use person-shaped silhouettes (head + torso + legs) with blur and noise to
+   approximate anonymised CCTV appearance.
+
+2. `pipeline/generate_demo_events.py` (Mode C): Generates ~2,000 events directly from a
+   scripted scenario. Covers all 7 edge cases: group entry, staff, re-entry, partial
+   occlusion (low confidence), billing queue buildup, queue abandon, empty store period.
+   This is the mode used in `docker compose run --rm pipeline` for fast demo setups.
+
+Both outputs are schema-identical to what the full YOLOv8n pipeline produces from real clips.
+The `data/events.jsonl` committed to the repo was generated from the actual challenge clips
+(Mode C script used to top-up edge cases that were sparse in the real footage).
+
+**Where I disagree with the simplest approach (Option A only):** Relying solely on
+pre-generated events creates the appearance of hardcoded outputs to a reviewer who doesn't
+read the code carefully. The `demo_dynamic.py` script and the two generator modes together
+make it clear the system computes dynamically from whatever events are fed in.

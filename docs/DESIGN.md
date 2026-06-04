@@ -11,7 +11,13 @@ The entire pipeline is designed around one business metric: **offline store conv
 ## System Architecture
 
 ```
-CCTV Clips (8 cameras, 2 stores)
+                           ┌─────────────────────────────────────┐
+   Mode A (no clips)  ───► │  generate_demo_events.py            │
+   Mode B (synthetic) ───► │  generate_demo_clips.py + detect.py │ ──► events.jsonl
+   Mode C (real clips) ──► │  detect.py + tracker.py + emit.py   │
+                           └──────────────────┬──────────────────┘
+                                              │ POST /events/ingest (batches of 500)
+CCTV Clips (8 cameras, 2 stores)              ▼
        │
        ▼
 ┌─────────────────────────────┐

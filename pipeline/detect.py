@@ -63,7 +63,11 @@ STORE_CONFIGS = {
 
 # ─── Detection parameters ─────────────────────────────────────────────────────
 YOLO_CONF_THRESHOLD = 0.35       # min confidence to accept a YOLO person detection
-DWELL_THRESHOLD_FRAMES = 450     # 30s at 15fps
+# DWELL_THRESHOLD_FRAMES: 30s worth of source frames at 15fps = 450.
+# The dwell check uses actual frame_num (not processed frame count), so this
+# threshold is always in source-fps units regardless of --every N sampling.
+# dwell_frames % 450 < process_every_n fires at each 30s mark.
+DWELL_THRESHOLD_FRAMES = 450     # 30s at 15fps (source fps, not sampled fps)
 STAFF_FRAME_THRESHOLD = 60       # 4s at 15fps → staff classification
 STAFF_AREA_THRESHOLD = 3500      # px² — staff in aprons produce larger boxes
 GROUP_PROXIMITY_PX = 80          # centroids within 80px = same group entry
@@ -573,11 +577,38 @@ def main():
 
     all_events.sort(key=lambda e: e["timestamp"])
 
+    # Cross-camera ENTRY deduplication:
+    # Store 2 has 2 overlapping entry cameras. The same physical person triggers
+    # an ENTRY on both CAM_ENTRY_01 and CAM_ENTRY_01B with identical visitor_ids
+    # (both trackers share the same sequential counter when detecting the n-th person).
+    # Result without this fix: 389 ENTRY events for 251 unique visitors (55% inflation).
+    # Fix: keep only the first ENTRY per visitor_id across all cameras.
+    # Cross-camera ENTRY deduplication (scoped per store):
+    # Store 2 has 2 overlapping entry cameras — same person triggers ENTRY on both.
+    # Both trackers reset their counter to 1 per clip, so person #14 on camera 1
+    # gets VIS_00014 and person #14 on camera 2 also gets VIS_00014.
+    # Fix: for each (store_id, visitor_id) pair, keep only the first ENTRY seen.
+    # Scoped per store so Store 1's VIS_00014 is never confused with Store 2's.
+    seen_entry: dict = {}   # key = (store_id, visitor_id)
+    deduped: list = []
+    skipped_entry_dups = 0
+    for evt in all_events:
+        if evt["event_type"] == "ENTRY":
+            key = (evt["store_id"], evt["visitor_id"])
+            if key in seen_entry:
+                skipped_entry_dups += 1
+                continue
+            seen_entry[key] = True
+        deduped.append(evt)
+    all_events = deduped
+
     with open(output_path, "w", encoding="utf-8") as f:
         for evt in all_events:
             f.write(json.dumps(evt) + "\n")
 
     print(f"\nGenerated {len(all_events)} events -> {output_path}")
+    if skipped_entry_dups:
+        print(f"   Removed {skipped_entry_dups} cross-camera duplicate ENTRY events")
     from collections import Counter
     for t, c in sorted(Counter(e["event_type"] for e in all_events).items()):
         print(f"   {t}: {c}")

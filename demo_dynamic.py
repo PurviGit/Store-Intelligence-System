@@ -26,7 +26,7 @@ import requests
 
 API = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "http://localhost:9000"
 DEMO_STORE = f"DEMO_DYNAMIC_{uuid.uuid4().hex[:8].upper()}"
-DATE = "2026-06-04"
+DATE = "2026-04-10"  # matches the CCTV clip recording date in the dataset
 PASS = "\033[92m[PASS]\033[0m"
 FAIL = "\033[91m[FAIL]\033[0m"
 INFO = "\033[94m[INFO]\033[0m"

@@ -3,8 +3,6 @@
 > **Purplle Tech Challenge 2026 — Round 2**  
 > End-to-end Store Intelligence System: raw CCTV footage → live store analytics
 
----
-
 ## What This Builds
 
 ```
@@ -28,8 +26,6 @@ CCTV Clips → YOLOv8n Detection → IoU Tracker + Re-ID → Structured Events �
 | Brigade Bangalore | `STORE_BLR_002` | Computed from POS CSV time-window correlation    |
 
 **Acceptance gate:** `GET /stores/STORE_BLR_002/metrics` returns `{unique_visitors, conversion_rate, avg_dwell_per_zone, current_queue_depth, abandonment_rate}`
-
----
 
 ## Setup in 5 Commands
 
@@ -61,6 +57,8 @@ docker compose up --build
 # Dashboard: http://localhost:3000
 # Build: ~60-90s (API image has no PyTorch — fast install)
 # Auto-ingest: data/events.jsonl loaded automatically on first startup
+# Note: metrics show 2026-04-10 — that is the CCTV clip recording date (correct)
+# The API uses _latest_event_date() to serve analytics for the clip's actual date
 ```
 
 ---
@@ -73,42 +71,69 @@ python demo_dynamic.py http://localhost:9000
 
 Expected output:
 
-```
-Results: 20 passed, 0 failed
-
 ✓ All checks passed — metrics compute dynamically from events.
-  The API does NOT serve pre-baked/hardcoded values.
-```
+The API does NOT serve pre-baked/hardcoded values.
+
+````
 
 > Each run uses a random store ID — metrics always start at zero and respond to what you inject.
 
----
+## Running the Detection Pipeline
 
-## Running the Detection Pipeline Against CCTV Clips
+Three modes depending on what you have available:
 
-The pipeline uses **YOLOv8n** (downloads 6 MB model on first run).
+### Mode A — Scripted demo events (no clips, no YOLO required)
 
-**Windows PowerShell** (use `$env:` — inline `VAR=value` syntax does not work in PowerShell):
+Generates ~2,000 realistic events covering all 7 edge cases. **Use this if you don't have the CCTV clips.** Developer/testing utility only. Challenge evaluation uses Mode C (real CCTV clips).
 
-```powershell
-$env:STORE1_DIR = "C:\path\to\Store 1"
-$env:STORE2_DIR = "C:\path\to\Store 2"
+```bash
+# Generate events directly from a scripted scenario
+python pipeline/generate_demo_events.py --output data/events.jsonl
+
+# Then ingest into the running API
+python pipeline/ingest_events.py --input data/events.jsonl --api-url http://localhost:9000
+````
+
+Or via Docker:
+
+```bash
+docker compose run --rm pipeline          # generates events.jsonl
+docker compose up api dashboard           # API auto-ingests on startup
+```
+
+### Mode B — Synthetic video clips (no real clips, YOLO runs on generated footage)
+
+Generates 1080p/15fps MP4 clips with animated person silhouettes then runs full YOLOv8n detection.
+YOLO detection rate on synthetic footage is ~40-70% (lower than real ~85-95% — expected and documented).
+
+```bash
+# Install pipeline dependencies
+pip install -r requirements-pipeline.txt
+
+# Generate demo clips (120s each, ~8 clips)
+python pipeline/generate_demo_clips.py --output-dir data/demo_clips --duration 120
+
+# Run full YOLO pipeline on synthetic clips
+STORE1_DIR="data/demo_clips/Store 1" \
+STORE2_DIR="data/demo_clips/Store 2" \
 bash pipeline/run.sh
 ```
 
-**Linux / Mac / Git Bash — CLI args** (recommended, works on all platforms):
+### Mode C — Real CCTV clips (challenge dataset, full accuracy)
+
+The actual challenge dataset (not in repo per submission rules). Run with real clips for ground-truth accuracy.
 
 ```bash
-bash pipeline/run.sh --store1 "/path/to/Store 1" --store2 "/path/to/Store 2"
-```
+# Windows PowerShell
+$env:STORE1_DIR = "C:\path\to\Store 1"
+$env:STORE2_DIR = "C:\path\to\Store 2"
+bash pipeline/run.sh
 
-**Linux / Mac — inline env**:
-
-```bash
+# Linux / Mac / Git Bash
 STORE1_DIR="/path/to/Store 1" STORE2_DIR="/path/to/Store 2" bash pipeline/run.sh
 ```
 
-**Or step-by-step**:
+Or step-by-step:
 
 ```bash
 python pipeline/detect.py \
@@ -116,7 +141,7 @@ python pipeline/detect.py \
   --store1-dir "path/to/Store 1" \
   --store2-dir "path/to/Store 2" \
   --output data/events.jsonl \
-  --every 3
+  --every 3                        # every 3rd frame = 5fps effective
 
 python pipeline/ingest_events.py \
   --input data/events.jsonl \
@@ -124,7 +149,7 @@ python pipeline/ingest_events.py \
   --batch-size 500
 ```
 
-**Expected clip filenames:**
+**Expected clip filenames for real dataset:**
 
 | Store   | Camera role | Filename                               |
 | ------- | ----------- | -------------------------------------- |
@@ -135,7 +160,13 @@ python pipeline/ingest_events.py \
 | Store 2 | Zone        | `zone.mp4`                             |
 | Store 2 | Billing     | `billing_area.mp4`                     |
 
----
+**Note — cross-camera ENTRY deduplication (applied automatically):**
+Store 2 has two overlapping entry cameras (`entry 1.mp4` and `entry 2.mp4`) covering the
+same entrance. Both cameras' trackers use independent sequential counters, so person #N
+on camera 1 and person #N on camera 2 get the same visitor_id (`VIS_000N`). Without
+deduplication this causes double-counting: 389 ENTRY events for 251 unique visitors.
+
+The pipeline automatically deduplicates: after all clips are processed, for each `(store_id, visitor_id)` pair only the first ENTRY event is kept. Result: `251 ENTRY events = 251 unique visitors (1:1)`. This fix is in `pipeline/detect.py` (lines after `all_events.sort()`). The same deduplication was applied to the pre-generated `data/events.jsonl`.
 
 ## API Endpoints
 
@@ -148,6 +179,7 @@ python pipeline/ingest_events.py \
 | `GET /stores/{id}/anomalies` | INFO/WARN/CRITICAL alerts                       | suggested_action per anomaly             |
 | `GET /health`                | DB status, per-store last event                 | STALE_FEED if >10 min lag                |
 | `GET /events/recent`         | Last N events (used by dashboard)               | store_id filter, limit ≤100              |
+| `GET /metrics/prometheus`    | Prometheus-format observability metrics         | uptime, request counts, P99 latency      |
 
 ```bash
 # Sample calls
@@ -157,7 +189,10 @@ curl http://localhost:9000/stores/STORE_BLR_002/anomalies
 curl http://localhost:9000/health
 ```
 
----
+Validation Results
+
+assertions.py: 12/12 passed
+demo_dynamic.py: 20/20 passed
 
 ## Cross-Camera Funnel — How It Works
 
@@ -177,8 +212,6 @@ runs an independent tracker.
 Overlapping sessions (two visitors in the same time window) are handled by assigning each
 event to the session with the smallest `event_ts - entry_ts` gap (nearest start wins).
 
----
-
 ## Re-ID — Appearance Features
 
 Re-entry detection uses a two-stage pipeline:
@@ -192,8 +225,6 @@ correlation ~0.1 (below 0.35 threshold) → correctly treated as two separate vi
 
 When no frame is available (test harness events injected via POST), `color_hist=None`
 and Re-ID falls back to geometry-only — graceful degradation with no crashes.
-
----
 
 ## Tests
 
@@ -214,11 +245,15 @@ python assertions.py http://localhost:9000
 | `test_anomalies.py`         | Queue spike, abandonment, dead zone, severity ordering, suggested_action |
 | `test_session_stitching.py` | Cross-camera funnel stitching, tracker Re-ID, direction detection        |
 
----
-
 ## Dashboard
 
-Live web dashboard at `http://localhost:3000`:
+Live web dashboard at `http://localhost:3000` — updates every 5 seconds from live API:
+
+**Store 2 — Brigade Bangalore (9.6% conversion, 34.6% abandonment, 24 POS transactions):**
+![Store 2 — Brigade Bangalore: KPIs, Funnel, Heatmap, Anomalies](docs/Dashboard.png)
+
+**Live Event Stream — BILLING_QUEUE_ABANDON events flowing in real time:**
+![Live Detection Pipeline and Event Stream](docs/Dashboard1.png)
 
 - **KPI cards**: unique visitors, conversion rate, queue depth, abandonment
 - **Animated pipeline demo**: canvas showing simulated YOLOv8 bounding boxes + zone overlays
@@ -229,8 +264,6 @@ Live web dashboard at `http://localhost:3000`:
 - **Anomalies**: CRITICAL/WARN/INFO with suggested_action
 - **Revenue metrics**: total, avg basket, revenue per visitor
 - **Store switcher**: BLR_001 / BLR_002 with event counts
-
----
 
 ## Project Structure
 
@@ -274,8 +307,6 @@ store-intelligence/
 ├── Dockerfile.dashboard   # Dashboard container
 └── Dockerfile.pipeline    # Pipeline container (for offline processing)
 ```
-
----
 
 ## Key Design Decisions (see `docs/CHOICES.md` for full reasoning)
 

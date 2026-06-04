@@ -77,8 +77,20 @@ def get_heatmap(
     max_visits = max(r.visit_events for r in rows)
     max_dwell = max((r.avg_dwell_ms or 0) for r in rows)
 
-    total_sessions = sum(r.unique_visitors for r in rows)
-    confidence = "HIGH" if total_sessions >= 20 else "LOW"
+    # Confidence is based on unique entering visitors (Stage 1), NOT the sum of
+    # per-zone unique visitors. The previous logic summed zone visitors (5 visitors
+    # × 3 zones = 15), which could flip LOW→HIGH incorrectly. The spec says
+    # "fewer than 20 sessions in window" — session = one visitor visit, not one
+    # zone event. Use distinct ENTRY count as the session count.
+    unique_session_count = db.query(
+        func.count(distinct(EventORM.visitor_id))
+    ).filter(
+        EventORM.store_id == store_id,
+        EventORM.event_type == "ENTRY",
+        EventORM.is_staff == False,
+        EventORM.timestamp.like(f"{date_str}%"),
+    ).scalar() or 0
+    confidence = "HIGH" if unique_session_count >= 20 else "LOW"
 
     zones = []
     for r in rows:

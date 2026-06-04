@@ -1,8 +1,25 @@
 version: "3.9"
 
-# API image: FastAPI + SQLite only (no PyTorch/OpenCV) — builds in ~60s.
-# Pipeline image: YOLOv8n + OpenCV — run separately when processing CCTV clips.
-# See: STORE1_DIR="..." STORE2_DIR="..." bash pipeline/run.sh
+# ─── Service overview ──────────────────────────────────────────────────────────
+# api        – FastAPI + SQLite intelligence API (port 9000). Auto-ingests
+#              data/events.jsonl on first startup. No PyTorch in this image.
+# dashboard  – Flask live dashboard (port 3000). Polls API every 5s.
+# pipeline   – Optional: generates demo events when real CCTV clips are absent.
+#              Runs once then exits. Override with STORE1_DIR / STORE2_DIR to
+#              run the full YOLOv8n detection pipeline against real clips.
+#
+# Default flow (no real clips):
+#   docker compose up api dashboard
+#   → API auto-ingests pre-generated data/events.jsonl
+#
+# With demo event generation:
+#   docker compose run --rm pipeline
+#   docker compose up api dashboard
+#
+# With real clips (full YOLOv8n pipeline):
+#   STORE1_DIR="/path/to/Store 1" STORE2_DIR="/path/to/Store 2" \
+#     docker compose run --rm pipeline-full
+# ─────────────────────────────────────────────────────────────────────────────
 
 services:
   api:
@@ -12,11 +29,10 @@ services:
     ports:
       - "9000:8000"
     environment:
-      # DB stored inside the bind-mounted data/ dir — always fresh on rebuild
       - DATABASE_URL=sqlite:////app/data/store_intelligence.db
       - POS_FILE=/app/data/pos_transactions.csv
     volumes:
-      - ./data:/app/data      # events.jsonl, pos_transactions.csv, store_layout.json, DB
+      - ./data:/app/data      # events.jsonl auto-ingested on first start
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -35,3 +51,47 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+
+  # ── Scripted demo event generator (no video / no YOLO required) ─────────────
+  # Generates realistic events covering all 7 edge cases from the problem statement.
+  # Output: data/events.jsonl (same format as real pipeline output).
+  # Run once before starting the API if you want fresh generated events:
+  #   docker compose run --rm pipeline
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PYTHONPATH=/app
+    command: >
+      sh -c "
+        echo '=== Generating scripted demo events (no clips required) ===' &&
+        python pipeline/generate_demo_events.py --output /app/data/events.jsonl &&
+        echo '=== Done. Start API with: docker compose up api dashboard ==='
+      "
+    profiles:
+      - pipeline   # only runs when explicitly called or with --profile pipeline
+
+  # ── Full YOLOv8n pipeline with real CCTV clips ──────────────────────────────
+  # Requires: STORE1_DIR and STORE2_DIR env vars pointing to clip directories.
+  # Usage:
+  #   STORE1_DIR="/path/Store 1" STORE2_DIR="/path/Store 2" \
+  #     docker compose run --rm pipeline-full
+  pipeline-full:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    volumes:
+      - ./data:/app/data
+      - ${STORE1_DIR:-/dev/null}:/videos/store1:ro
+      - ${STORE2_DIR:-/dev/null}:/videos/store2:ro
+    environment:
+      - STORE1_DIR=/videos/store1
+      - STORE2_DIR=/videos/store2
+      - API_URL=http://api:8000
+      - PYTHONPATH=/app
+    command: bash pipeline/run.sh
+    profiles:
+      - pipeline-full

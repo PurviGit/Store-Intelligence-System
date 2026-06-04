@@ -8,14 +8,14 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Pipeline deps only: OpenCV + YOLOv8 + requests
 COPY requirements-pipeline.txt .
 RUN pip install --no-cache-dir -r requirements-pipeline.txt
 
-# Pre-download YOLOv8n weights at build time (~6MB) so the pipeline
-# starts immediately without downloading at runtime.
-# If the download fails during build (no internet), the pipeline will
-# download on first run instead — ultralytics handles this gracefully.
-RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" || echo "YOLO weights will download at runtime"
+# Pre-download YOLOv8n weights at build time (~6MB).
+# Falls back gracefully to runtime download if build has no internet.
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" || \
+    echo "[INFO] YOLOv8n weights not cached — will download at runtime"
 
 COPY pipeline/ ./pipeline/
 COPY data/ ./data/
@@ -26,4 +26,6 @@ ENV API_URL=http://api:8000
 
 WORKDIR /app
 
-CMD ["bash", "pipeline/run.sh"]
+# Default: scripted demo event generator (no clips required).
+# Override with: bash pipeline/run.sh (requires STORE1_DIR / STORE2_DIR)
+CMD ["python", "pipeline/generate_demo_events.py", "--output", "data/events.jsonl"]

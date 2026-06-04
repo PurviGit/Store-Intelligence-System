@@ -31,9 +31,21 @@
 *.mkv
 *.zip
 
-# Purplle provided dataset resource files (do not commit per rules)
+# Challenge dataset video files (must not commit per submission rules)
+# Real CCTV clips stay on your local machine
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.zip
+
+# Generated demo clips directory (synthetic, but large — keep out of repo)
+data/demo_clips/
+
+# Challenge-provided reference files (do not commit)
 data/POS*sample*.csv
 data/sample_events*.jsonl
 data/Brigade*.csv
-*.mp4
+
+# Dashboard screenshots (keep in docs/ only)
 *.png

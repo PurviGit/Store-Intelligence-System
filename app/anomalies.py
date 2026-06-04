@@ -62,7 +62,12 @@ def _detect_conversion_drop(db: Session, store_id: str, date_str: str) -> Option
 
     today_rate = today_billing / today_visitors if today_visitors > 0 else 0.0
 
-    # Baseline: all-time rate from stored data (7-day avg approximation)
+    # Baseline: all-time rate from stored data (7-day avg approximation).
+    # IMPORTANT: if all data is from the same date (e.g. harness test run or single-day
+    # dataset), the all-time query equals today — baseline_rate == today_rate and the
+    # anomaly never fires. Fall back to the retail industry benchmark (35%) in that case.
+    INDUSTRY_BASELINE = 0.35  # retail conversion benchmark used when historical data absent
+
     all_visitors = db.query(distinct(EventORM.visitor_id)).filter(
         EventORM.store_id == store_id,
         EventORM.event_type == "ENTRY",
@@ -75,7 +80,22 @@ def _detect_conversion_drop(db: Session, store_id: str, date_str: str) -> Option
         EventORM.is_staff == False,
     ).count()
 
-    baseline_rate = all_billing / all_visitors if all_visitors > 0 else today_rate
+    # Detect single-date contamination: if all DB visitors are from today,
+    # the "historical" baseline is just today's number — useless as a reference.
+    other_date_visitors = db.query(distinct(EventORM.visitor_id)).filter(
+        EventORM.store_id == store_id,
+        EventORM.event_type == "ENTRY",
+        EventORM.is_staff == False,
+        ~EventORM.timestamp.like(f"{date_str}%"),
+    ).count()
+
+    if other_date_visitors == 0:
+        # No historical data outside today — use industry benchmark
+        baseline_rate = INDUSTRY_BASELINE
+    elif all_visitors > 0:
+        baseline_rate = all_billing / all_visitors
+    else:
+        baseline_rate = INDUSTRY_BASELINE
 
     if baseline_rate > 0 and today_rate < baseline_rate * (1 - CONVERSION_DROP_THRESHOLD):
         drop_pct = round((baseline_rate - today_rate) / baseline_rate * 100, 1)

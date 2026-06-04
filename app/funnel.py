@@ -79,29 +79,30 @@ def get_funnel(
 
     billing_sessions = stitcher.count_billing_sessions(billing_events)
 
-    # Fallback: POS transactions + abandonments (most reliable ground truth)
+    # POS transactions + abandonments (ground truth for billing visitors)
     transactions = load_pos_transactions(store_id, date_str)
     num_purchases = len(transactions)
 
     abandon_count = db.query(func.count(distinct(EventORM.visitor_id))).filter(
         EventORM.store_id == store_id,
         EventORM.event_type == "BILLING_QUEUE_ABANDON",
-        EventORM.dwell_ms > 5000,
         EventORM.timestamp.like(f"{date_str}%"),
     ).scalar() or 0
 
-    # Use the larger of CCTV count vs POS-anchored count, capped at Stage 1
-    # Stage 3 = CCTV billing arrivals (primary signal).
-    # POS provides a minimum floor only: at minimum, num_purchases visitors reached billing.
-    # Previously used max(billing_sessions, num_purchases + abandons) which could inflate
-    # Stage 3 above reality. Now billing_sessions is authoritative; POS is just a floor.
-    stage3_raw = max(billing_sessions, num_purchases)
-    stage3_visitors = min(stage3_raw, stage1_visitors)
+    # Stage 3 — billing visitors:
+    # POS-anchored count (purchases + confirmed abandonments) is more reliable than
+    # raw CCTV billing session count. CCTV billing cameras over-count due to:
+    #   1. IoU tracker re-tracking the same person multiple times in a crowded queue
+    #   2. Cross-camera double-counting (entry + billing camera both see same person)
+    # POS-anchored gives: "people who definitely reached billing" =
+    #   buyers (confirmed by transaction) + abandoners (left billing without buying)
+    # Cap at Stage 2: can't have more billing visitors than zone browsers.
+    stage3_pos_anchored = num_purchases + abandon_count
+    stage3_visitors = min(stage3_pos_anchored, stage2_visitors)
+    # Ensure Stage 3 is at least num_purchases (we know for certain they were there)
+    stage3_visitors = max(stage3_visitors, num_purchases)
 
-    # Funnel monotonicity: Stage 2 >= Stage 3.
-    # If billing data exceeds zone data (e.g. customer walked straight to billing
-    # without passing a zone camera), bump Stage 2 up to Stage 3.
-    # Physical interpretation: anyone who reached billing also walked through the store.
+    # Funnel monotonicity guarantee
     stage2_visitors = min(max(stage2_visitors, stage3_visitors), stage1_visitors)
 
     # ── Stage 4: Confirmed purchases (POS ground truth) ──────────────────────
