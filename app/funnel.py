@@ -98,6 +98,12 @@ def get_funnel(
     stage3_raw = max(billing_sessions, num_purchases)
     stage3_visitors = min(stage3_raw, stage1_visitors)
 
+    # Funnel monotonicity: Stage 2 >= Stage 3.
+    # If billing data exceeds zone data (e.g. customer walked straight to billing
+    # without passing a zone camera), bump Stage 2 up to Stage 3.
+    # Physical interpretation: anyone who reached billing also walked through the store.
+    stage2_visitors = min(max(stage2_visitors, stage3_visitors), stage1_visitors)
+
     # ── Stage 4: Confirmed purchases (POS ground truth) ──────────────────────
     stage4_visitors = min(num_purchases, stage3_visitors)
 

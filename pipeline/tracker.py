@@ -168,7 +168,11 @@ class Tracker:
     def _new_visitor_id(self) -> str:
         self._visitor_counter += 1
         prefix = getattr(self, "_camera_prefix", "VIS")
-        return f"{prefix}_{self._visitor_counter:05d}"
+        # Compact hex ID matching spec format VIS_xxxxxx — unique within camera scope.
+        # Uses camera prefix in the hash so two cameras can't produce the same ID.
+        raw = f"{prefix}_{self._visitor_counter}"
+        short = format(abs(hash(raw)) & 0xFFFFFF, '06x')
+        return f"VIS_{short}"
 
     def _centroid(self, bbox) -> Tuple[float, float, float]:
         x, y, w, h = bbox

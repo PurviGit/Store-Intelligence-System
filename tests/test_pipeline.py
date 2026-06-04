@@ -70,13 +70,28 @@ class TestIngest:
         resp = client.post("/events/ingest", json={"events": events})
         assert resp.status_code == 400
 
-    def test_partial_success_bad_event_type(self, client):
-        good = make_event()
+    def test_partial_success_mixed_batch(self, client):
+        """
+        A batch with 4 valid + 1 invalid event must return ingested=4, errors=1.
+        The whole batch must NOT fail — partial success is required by spec.
+        """
+        good_events = [make_event(event_id=str(uuid.uuid4()), visitor_id=f"VIS_{i:05d}") for i in range(4)]
+        bad_event = make_event(event_type="INVALID_TYPE", event_id=str(uuid.uuid4()))
+        resp = client.post("/events/ingest", json={"events": good_events + [bad_event]})
+        assert resp.status_code == 200, f"Expected 200 partial success, got {resp.status_code}"
+        data = resp.json()
+        assert data["ingested"] == 4, f"Expected 4 ingested, got {data['ingested']}"
+        assert data["errors"] == 1, f"Expected 1 error, got {data['errors']}"
+        assert len(data["error_details"]) == 1
+
+    def test_single_invalid_event_returns_partial_not_422(self, client):
+        """A single bad event must return 200 with errors=1, not 422."""
         bad = make_event(event_type="INVALID_TYPE", event_id=str(uuid.uuid4()))
-        resp = client.post("/events/ingest", json={"events": [good, bad]})
-        # Good event ingested; bad event raises validation error at Pydantic level
-        # Either 422 (whole batch) or 200 with partial success
-        assert resp.status_code in (200, 422)
+        resp = client.post("/events/ingest", json={"events": [bad]})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ingested"] == 0
+        assert data["errors"] == 1
 
     def test_all_eight_event_types_accepted(self, client):
         event_types = [
@@ -88,15 +103,18 @@ class TestIngest:
             resp = client.post("/events/ingest", json={"events": [evt]})
             assert resp.status_code == 200, f"Failed for event_type={et}"
 
-    def test_invalid_timestamp_rejected(self, client):
+    def test_invalid_timestamp_counted_as_error(self, client):
         evt = make_event(timestamp="not-a-timestamp")
         resp = client.post("/events/ingest", json={"events": [evt]})
-        assert resp.status_code == 422
+        # Per-event validation: bad event returns 200 with errors=1, not 422
+        assert resp.status_code == 200
+        assert resp.json()["errors"] == 1
 
-    def test_invalid_confidence_over_1_rejected(self, client):
+    def test_invalid_confidence_over_1_counted_as_error(self, client):
         evt = make_event(confidence=1.5)
         resp = client.post("/events/ingest", json={"events": [evt]})
-        assert resp.status_code == 422
+        assert resp.status_code == 200
+        assert resp.json()["errors"] == 1
 
     def test_response_has_trace_id_header(self, client):
         resp = client.post("/events/ingest", json={"events": [make_event()]})

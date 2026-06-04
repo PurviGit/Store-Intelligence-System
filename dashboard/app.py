@@ -43,6 +43,26 @@ HTML = r"""<!DOCTYPE html>
 }
 body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
 
+/* ── Detection Demo ─────────────────────── */
+.demo-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media(max-width:900px){ .demo-row { grid-template-columns:1fr; } }
+.demo-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.demo-panel h3 { font-size:.8rem; color:var(--accent-light); margin-bottom:10px; letter-spacing:.06em; text-transform:uppercase; }
+.floor-plan { width:100%; aspect-ratio:16/9; background:#090920; border-radius:6px; border:1px solid var(--border); position:relative; overflow:hidden; }
+.zone-rect { position:absolute; border:1px solid var(--border); border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:.55rem; color:var(--muted); text-align:center; transition:background .4s; }
+.zone-rect.active { border-color:var(--accent-light); color:var(--accent-light); }
+.person-dot { position:absolute; width:10px; height:10px; border-radius:50%; background:var(--green); border:2px solid #fff; transform:translate(-50%,-50%); transition:left .8s ease, top .8s ease; z-index:5; }
+.person-dot.staff { background:var(--yellow); }
+.video-info { font-size:.72rem; color:var(--muted); margin-top:8px; line-height:1.6; }
+.video-info b { color:var(--text); }
+.pipeline-step { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); font-size:.72rem; }
+.pipeline-step:last-child { border:none; }
+.step-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.step-active { background:var(--green); box-shadow:0 0 6px var(--green); }
+.step-idle { background:var(--border); }
+.step-label { color:var(--muted); }
+.step-val { margin-left:auto; color:var(--text); font-weight:600; }
+
 /* ── Header ─────────────────────────────── */
 header {
   background: var(--surface); padding: 12px 24px;
@@ -415,6 +435,80 @@ header h1 { font-size: 1.1rem; color: var(--accent-light); display: flex; align-
 
   </div>
 
+  <!-- ── Detection Demo + Pipeline Status ─── -->
+  <div class="demo-row">
+
+    <!-- Animated store floor plan — persons shown as moving dots from live events -->
+    <div class="demo-panel">
+      <h3>📹 Live Detection View — Store Floor Plan</h3>
+      <div class="floor-plan" id="floor-plan">
+        <!-- Zone rectangles populated by JS from zone layout -->
+        <div class="zone-rect" id="fz-ENTRY" style="left:42%;top:0;width:16%;height:14%;background:rgba(124,58,237,.1)">ENTRY</div>
+        <div class="zone-rect" id="fz-BILLING" style="left:75%;top:70%;width:22%;height:28%;background:rgba(239,68,68,.08)">BILLING</div>
+        <div class="zone-rect" id="fz-MINIMALIST" style="left:2%;top:15%;width:22%;height:35%;background:rgba(110,231,183,.06)">MINIMALIST</div>
+        <div class="zone-rect" id="fz-SALM" style="left:26%;top:15%;width:22%;height:35%;background:rgba(110,231,183,.06)">SALM / TFS</div>
+        <div class="zone-rect" id="fz-EB_KOREAN" style="left:2%;top:55%;width:22%;height:30%;background:rgba(167,139,250,.06)">EB KOREAN</div>
+        <div class="zone-rect" id="fz-SKINCARE"  style="left:26%;top:55%;width:22%;height:30%;background:rgba(167,139,250,.06)">SKINCARE</div>
+        <!-- Person dots injected by JS -->
+      </div>
+      <div class="video-info">
+        <b>How to view actual CCTV clips:</b> Run
+        <code style="background:#1a1a3a;padding:1px 5px;border-radius:3px;">
+          STORE1_DIR="path/Store 1" STORE2_DIR="path/Store 2" bash pipeline/run.sh
+        </code>
+        — the pipeline processes clips and feeds events into the API in real time.
+        The floor plan above shows <b>active visitor positions</b> derived from live events.
+      </div>
+    </div>
+
+    <!-- Pipeline health + stage counters -->
+    <div class="demo-panel">
+      <h3>⚙️ Pipeline Status</h3>
+      <div id="pipeline-steps">
+        <div class="pipeline-step">
+          <div class="step-dot step-active" id="ps-dot-cctv"></div>
+          <span class="step-label">CCTV Input</span>
+          <span class="step-val" id="ps-cctv">2 stores · 8 cameras</span>
+        </div>
+        <div class="pipeline-step">
+          <div class="step-dot step-active" id="ps-dot-detect"></div>
+          <span class="step-label">YOLOv8n Detection</span>
+          <span class="step-val" id="ps-detect">@5fps effective</span>
+        </div>
+        <div class="pipeline-step">
+          <div class="step-dot step-active" id="ps-dot-track"></div>
+          <span class="step-label">IoU Tracker + Re-ID</span>
+          <span class="step-val" id="ps-track">HSV histogram matching</span>
+        </div>
+        <div class="pipeline-step">
+          <div class="step-dot" id="ps-dot-events"></div>
+          <span class="step-label">Events Ingested</span>
+          <span class="step-val" id="ps-events">—</span>
+        </div>
+        <div class="pipeline-step">
+          <div class="step-dot" id="ps-dot-entry"></div>
+          <span class="step-label">ENTRY events</span>
+          <span class="step-val" id="ps-entry">—</span>
+        </div>
+        <div class="pipeline-step">
+          <div class="step-dot" id="ps-dot-zone"></div>
+          <span class="step-label">ZONE_DWELL events</span>
+          <span class="step-val" id="ps-zone">—</span>
+        </div>
+        <div class="pipeline-step">
+          <div class="step-dot" id="ps-dot-billing"></div>
+          <span class="step-label">BILLING events</span>
+          <span class="step-val" id="ps-billing">—</span>
+        </div>
+        <div class="pipeline-step">
+          <div class="step-dot" id="ps-dot-reentry"></div>
+          <span class="step-label">REENTRY caught</span>
+          <span class="step-val" id="ps-reentry">—</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Business Recommendations ─────────── -->
   <div class="reco-row">
     <div class="reco" style="border-left:3px solid var(--red)">
@@ -587,22 +681,112 @@ window.addEventListener('resize', resizeCanvas);
 spawnPerson(); spawnPerson();
 drawDemo();
 
+// ── Floor Plan Person Dots ────────────────────────────────
+// Animate person positions on the floor plan based on live event data
+const ZONE_POSITIONS = {
+  'ENTRY':     { left:'50%', top:'5%'  },
+  'ENTRY_THRESHOLD': { left:'50%', top:'5%' },
+  'MINIMALIST':{ left:'13%', top:'32%' },
+  'SALM':      { left:'37%', top:'32%' },
+  'EB_KOREAN': { left:'13%', top:'70%' },
+  'SKINCARE':  { left:'37%', top:'70%' },
+  'BILLING':   { left:'86%', top:'84%' },
+  'MAKEUP':    { left:'60%', top:'50%' },
+  'HAIRCARE':  { left:'60%', top:'30%' },
+};
+let activeDots = {};  // visitor_id → {el, lastSeen, zone}
+
+function updateFloorPlan(events) {
+  const plan = document.getElementById('floor-plan');
+  if (!plan) return;
+  const now = Date.now();
+
+  events.forEach(e => {
+    if (e.is_staff) return;
+    const vid = e.visitor_id;
+    const zone = e.zone_id || 'ENTRY';
+    const pos = ZONE_POSITIONS[zone] || ZONE_POSITIONS['ENTRY'];
+
+    // Highlight zone
+    const zEl = document.getElementById('fz-' + zone);
+    if (zEl) { zEl.classList.add('active'); setTimeout(() => zEl.classList.remove('active'), 2000); }
+
+    if (!activeDots[vid]) {
+      const dot = document.createElement('div');
+      dot.className = 'person-dot';
+      dot.title = vid;
+      plan.appendChild(dot);
+      activeDots[vid] = { el: dot, lastSeen: now, zone };
+    }
+    const d = activeDots[vid];
+    d.el.style.left = pos.left;
+    // jitter y slightly per visitor so dots don't stack
+    const jitter = (Math.abs(vid.charCodeAt(vid.length-1) % 20) - 10);
+    d.el.style.top = `calc(${pos.top} + ${jitter}px)`;
+    d.lastSeen = now;
+    d.zone = zone;
+
+    if (e.event_type === 'EXIT' || e.event_type === 'BILLING_QUEUE_ABANDON') {
+      setTimeout(() => {
+        if (d.el && d.el.parentNode) d.el.parentNode.removeChild(d.el);
+        delete activeDots[vid];
+      }, 2000);
+    }
+  });
+
+  // Remove stale dots (>60s old)
+  Object.keys(activeDots).forEach(vid => {
+    if (now - activeDots[vid].lastSeen > 60000) {
+      if (activeDots[vid].el.parentNode) activeDots[vid].el.parentNode.removeChild(activeDots[vid].el);
+      delete activeDots[vid];
+    }
+  });
+}
+
+function updatePipelineStats(metrics, recentEvts) {
+  const events = recentEvts?.events ?? [];
+  const typeCounts = {};
+  events.forEach(e => { typeCounts[e.event_type] = (typeCounts[e.event_type]||0)+1; });
+
+  const total = (metrics?.unique_visitors ?? 0);
+  const setVal = (id, val, active) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+    const dot = document.getElementById(id.replace('ps-','ps-dot-'));
+    if (dot) { dot.className = 'step-dot ' + (active ? 'step-active' : 'step-idle'); }
+  };
+  setVal('ps-events', `${recentEvts?.total ?? 0} events`, (recentEvts?.total ?? 0) > 0);
+  setVal('ps-entry',  `${typeCounts['ENTRY']||0} ENTRY`, (typeCounts['ENTRY']||0)>0);
+  setVal('ps-zone',   `${typeCounts['ZONE_DWELL']||0} DWELL`, (typeCounts['ZONE_DWELL']||0)>0);
+  setVal('ps-billing',`${(typeCounts['BILLING_QUEUE_JOIN']||0)} JOIN`, (typeCounts['BILLING_QUEUE_JOIN']||0)>0);
+  setVal('ps-reentry',`${typeCounts['REENTRY']||0} caught`, (typeCounts['REENTRY']||0)>0);
+}
+
 // ── Store switching ───────────────────────────────────────
 let currentStore = '';
 
 async function loadStores() {
   try {
     const h = await fetch('/api/store-health').then(r => r.json());
-    const stores = (h.stores || []).filter(s => s.total_events > 0);
+    const allStores = (h.stores || []).filter(s => s.total_events > 0);
+    // Always show Store 1 first
+    const ORDER = ['STORE_BLR_001', 'STORE_BLR_002'];
+    const stores = [...allStores].sort((a, b) => {
+      const ia = ORDER.indexOf(a.store_id), ib = ORDER.indexOf(b.store_id);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
     const sel = document.getElementById('store-sel');
-    const labels = { 'STORE_BLR_002': 'Brigade Bangalore', 'STORE_BLR_001': 'Store 1 Bangalore' };
+    const labels = {
+      'STORE_BLR_001': 'Store 1 — Bangalore (CAM 1/2/3/5)',
+      'STORE_BLR_002': 'Store 2 — Brigade Bangalore',
+    };
     if (!stores.length) {
       sel.innerHTML = '<option>No data — run pipeline first</option>'; return;
     }
     sel.innerHTML = stores.map((s, i) =>
-      `<option value="${s.store_id}"${i===0?' selected':''}>${labels[s.store_id]||s.store_id} (${s.total_events.toLocaleString()} events)</option>`
+      `<option value="${s.store_id}"${i===0?' selected':''}>${labels[s.store_id]||s.store_id} · ${s.total_events.toLocaleString()} events</option>`
     ).join('');
-    currentStore = stores[0].store_id;
+    currentStore = stores[0].store_id;  // Store 1 is now always first
     document.getElementById('ns-events').textContent =
       stores.reduce((a, s) => a + s.total_events, 0).toLocaleString();
     refresh();
@@ -743,6 +927,10 @@ async function refresh() {
         <span class="ev-time">${t}</span>
       </div>`;
     }).join('') || '<p style="font-size:.78rem;color:var(--muted)">No events yet</p>';
+
+    // Floor plan + pipeline stats
+    updateFloorPlan(evts);
+    updatePipelineStats(metrics, recentEvts);
 
     // Recommendations
     const queueD  = metrics.current_queue_depth ?? 0;

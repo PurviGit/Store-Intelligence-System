@@ -67,7 +67,7 @@ DWELL_THRESHOLD_FRAMES = 450     # 30s at 15fps
 STAFF_FRAME_THRESHOLD = 60       # 4s at 15fps → staff classification
 STAFF_AREA_THRESHOLD = 3500      # px² — staff in aprons produce larger boxes
 GROUP_PROXIMITY_PX = 80          # centroids within 80px = same group entry
-DIRECTION_BUFFER_FRAMES = 8      # frames to buffer before confirming ENTRY vs EXIT direction
+DIRECTION_BUFFER_FRAMES = 10     # frames to buffer before confirming ENTRY vs EXIT direction
 
 
 def _load_pos_for_abandon(store_id: str) -> list:
@@ -243,7 +243,7 @@ def classify_staff(area: float, frame_count_in_scene: int, conf: float,
 
 def process_clip(clip_path: str, cam_meta: dict, store_id: str,
                  clip_start: str, output_events: list,
-                 model, process_every_n: int = 5):
+                 model, process_every_n: int = 3):
     camera_id = cam_meta["camera_id"]
     role      = cam_meta["role"]
     zone_id   = cam_meta.get("zone_id")
@@ -497,10 +497,22 @@ def process_clip(clip_path: str, cam_meta: dict, store_id: str,
                 zone_id=zone_id, zone_name=zone_name, zone_type=zone_type,
                 is_revenue_zone=is_rev, dwell_ms=dwell_ms,
                 sku_zone=sku_zone, **common_end))
+        elif role == "entry_exit":
+            # Tracks still visible at the entry threshold at clip end.
+            # We emit EXIT — they are either leaving or the clip ended mid-entry.
+            # Emitting EXIT ensures every session has a proper close event,
+            # preventing open sessions from inflating active visitor counts.
+            output_events.append(make_event(
+                event_type="EXIT", zone_id=None, zone_name=None,
+                zone_type="ENTRY", is_revenue_zone="No",
+                dwell_ms=dwell_ms, session_seq=track.session_seq,
+                **common_end))
+            visitors_exited.add(vid)
         elif role == "billing":
             # Tracks still in billing at clip end → do NOT emit ABANDON.
             # They may still be transacting. Only emit ABANDON during clip when
             # a track exits AND no POS transaction follows (handled in flush_exits loop).
+            pass
 
     cap.release()
     print(f"    -> frames={frame_num}  entries={entry_count}  events_so_far={len(output_events)}")
@@ -515,7 +527,7 @@ def find_clip(store_dir: Path, cam_key: str):
 
 
 def process_store(store_dir: Path, store_id: str, output_events: list,
-                  model, every: int = 5):
+                  model, every: int = 3):
     cfg = STORE_CONFIGS[store_id]
     clip_start = cfg["clip_start"]
     for cam_key, cam_meta in cfg["cameras"].items():
@@ -535,8 +547,8 @@ def main():
     parser.add_argument("--store1-dir", default=None)
     parser.add_argument("--store2-dir", default=None)
     parser.add_argument("--output",     default="data/events.jsonl")
-    parser.add_argument("--every",      type=int, default=5,
-                        help="Process every N frames (default 5 = ~3fps at 15fps source)")
+    parser.add_argument("--every",      type=int, default=3,
+                        help="Process every N frames (default 3 = ~5fps at 15fps source)")
     args = parser.parse_args()
 
     output_path = Path(args.output)

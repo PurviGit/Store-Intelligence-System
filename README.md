@@ -11,21 +11,21 @@
 CCTV Clips → YOLOv8n Detection → IoU Tracker + Re-ID → Structured Events → FastAPI → Live Dashboard
 ```
 
-| Component | Implementation |
-|---|---|
-| Detection | YOLOv8n (class=0, conf≥0.35, every 5th frame) |
-| Direction | Trajectory-based: linear regression on centroid y-history (8-frame buffer) |
-| Tracking | Custom IoU tracker, centroid history, appearance Re-ID (HSV histogram) |
-| Groups | Union-find on centroids within 80px → separate ENTRY per person |
-| Staff | Sustained presence (60+ frames) + bounding box area > 3500px² |
-| Funnel | Two-pass cross-camera session stitching (direct ID + time-window) |
-| Anomalies | 5 types: queue spike, conversion drop, dead zone, abandonment, stale feed |
+| Component | Implementation                                                               |
+| --------- | ---------------------------------------------------------------------------- |
+| Detection | YOLOv8n (class=0, conf≥0.35, every 5th frame)                                |
+| Direction | Trajectory-based: linear regression on centroid y-history (8-frame buffer)   |
+| Tracking  | Custom IoU tracker, centroid history, appearance Re-ID (HSV histogram)       |
+| Groups    | Union-find on centroids within 80px → separate ENTRY per person              |
+| Staff     | Sustained presence (60+ frames) + bounding box area > 3500px²                |
+| Funnel    | Two-pass cross-camera session stitching (direct ID + time-window)            |
+| Anomalies | 5 types: queue spike, conversion drop, dead zone, abandonment, stale feed    |
 | Dashboard | Flask web UI · animated detection demo · live event feed · real-time polling |
 
-| Store | ID | Conversion |
-|---|---|---|
+| Store             | ID              | Conversion                                       |
+| ----------------- | --------------- | ------------------------------------------------ |
 | Store 1 Bangalore | `STORE_BLR_001` | 0.0% — no POS data, handled gracefully (not N/A) |
-| Brigade Bangalore | `STORE_BLR_002` | Computed from POS CSV time-window correlation |
+| Brigade Bangalore | `STORE_BLR_002` | Computed from POS CSV time-window correlation    |
 
 **Acceptance gate:** `GET /stores/STORE_BLR_002/metrics` returns `{unique_visitors, conversion_rate, avg_dwell_per_zone, current_queue_depth, abandonment_rate}`
 
@@ -54,12 +54,33 @@ cd dashboard && python app.py
 ```
 
 **One command with Docker:**
+
 ```bash
 docker compose up --build
 # API:       http://localhost:9000
 # Dashboard: http://localhost:3000
-# Auto-ingest: events.jsonl loaded automatically on startup
+# Build: ~60-90s (API image has no PyTorch — fast install)
+# Auto-ingest: data/events.jsonl loaded automatically on first startup
 ```
+
+---
+
+## Dynamic Verification
+
+```bash
+python demo_dynamic.py http://localhost:9000
+```
+
+Expected output:
+
+```
+Results: 20 passed, 0 failed
+
+✓ All checks passed — metrics compute dynamically from events.
+  The API does NOT serve pre-baked/hardcoded values.
+```
+
+> Each run uses a random store ID — metrics always start at zero and respond to what you inject.
 
 ---
 
@@ -67,17 +88,35 @@ docker compose up --build
 
 The pipeline uses **YOLOv8n** (downloads 6 MB model on first run).
 
-```bash
-# One-command pipeline: detect → ingest → verify
-STORE1_DIR="/path/to/Store 1" STORE2_DIR="/path/to/Store 2" bash pipeline/run.sh
+**Windows PowerShell** (use `$env:` — inline `VAR=value` syntax does not work in PowerShell):
 
-# Or step-by-step:
+```powershell
+$env:STORE1_DIR = "C:\path\to\Store 1"
+$env:STORE2_DIR = "C:\path\to\Store 2"
+bash pipeline/run.sh
+```
+
+**Linux / Mac / Git Bash — CLI args** (recommended, works on all platforms):
+
+```bash
+bash pipeline/run.sh --store1 "/path/to/Store 1" --store2 "/path/to/Store 2"
+```
+
+**Linux / Mac — inline env**:
+
+```bash
+STORE1_DIR="/path/to/Store 1" STORE2_DIR="/path/to/Store 2" bash pipeline/run.sh
+```
+
+**Or step-by-step**:
+
+```bash
 python pipeline/detect.py \
   --all-stores \
   --store1-dir "path/to/Store 1" \
   --store2-dir "path/to/Store 2" \
   --output data/events.jsonl \
-  --every 5
+  --every 3
 
 python pipeline/ingest_events.py \
   --input data/events.jsonl \
@@ -87,28 +126,28 @@ python pipeline/ingest_events.py \
 
 **Expected clip filenames:**
 
-| Store | Camera role | Filename |
-|---|---|---|
-| Store 1 | Zone | `CAM 1 - zone.mp4`, `CAM 2 - zone.mp4` |
-| Store 1 | Entry/Exit | `CAM 3 - entry.mp4` |
-| Store 1 | Billing | `CAM 5 - billing.mp4` |
-| Store 2 | Entry/Exit | `entry 1.mp4`, `entry 2.mp4` |
-| Store 2 | Zone | `zone.mp4` |
-| Store 2 | Billing | `billing_area.mp4` |
+| Store   | Camera role | Filename                               |
+| ------- | ----------- | -------------------------------------- |
+| Store 1 | Zone        | `CAM 1 - zone.mp4`, `CAM 2 - zone.mp4` |
+| Store 1 | Entry/Exit  | `CAM 3 - entry.mp4`                    |
+| Store 1 | Billing     | `CAM 5 - billing.mp4`                  |
+| Store 2 | Entry/Exit  | `entry 1.mp4`, `entry 2.mp4`           |
+| Store 2 | Zone        | `zone.mp4`                             |
+| Store 2 | Billing     | `billing_area.mp4`                     |
 
 ---
 
 ## API Endpoints
 
-| Endpoint | Returns | Key Behaviour |
-|---|---|---|
-| `POST /events/ingest` | Batch ingest (max 500) | Idempotent by event_id · partial success |
-| `GET /stores/{id}/metrics` | Visitors, conversion, dwell, queue, abandonment | Staff excluded · real-time |
-| `GET /stores/{id}/funnel` | 4-stage: Entry→Zone→Billing→Purchase | Cross-camera session stitching |
-| `GET /stores/{id}/heatmap` | Zone frequency 0–100 + avg dwell | data_confidence flag |
-| `GET /stores/{id}/anomalies` | INFO/WARN/CRITICAL alerts | suggested_action per anomaly |
-| `GET /health` | DB status, per-store last event | STALE_FEED if >10 min lag |
-| `GET /events/recent` | Last N events (used by dashboard) | store_id filter, limit ≤100 |
+| Endpoint                     | Returns                                         | Key Behaviour                            |
+| ---------------------------- | ----------------------------------------------- | ---------------------------------------- |
+| `POST /events/ingest`        | Batch ingest (max 500)                          | Idempotent by event_id · partial success |
+| `GET /stores/{id}/metrics`   | Visitors, conversion, dwell, queue, abandonment | Staff excluded · real-time               |
+| `GET /stores/{id}/funnel`    | 4-stage: Entry→Zone→Billing→Purchase            | Cross-camera session stitching           |
+| `GET /stores/{id}/heatmap`   | Zone frequency 0–100 + avg dwell                | data_confidence flag                     |
+| `GET /stores/{id}/anomalies` | INFO/WARN/CRITICAL alerts                       | suggested_action per anomaly             |
+| `GET /health`                | DB status, per-store last event                 | STALE_FEED if >10 min lag                |
+| `GET /events/recent`         | Last N events (used by dashboard)               | store_id filter, limit ≤100              |
 
 ```bash
 # Sample calls
@@ -143,6 +182,7 @@ event to the session with the smallest `event_ts - entry_ts` gap (nearest start 
 ## Re-ID — Appearance Features
 
 Re-entry detection uses a two-stage pipeline:
+
 1. **Geometric gate** (fast): centroid distance <200px + area ratio 0.4–2.5 + within 5-min window
 2. **Appearance gate** (accurate): HSV color histogram correlation > 0.35
 
@@ -167,12 +207,12 @@ python assertions.py http://localhost:9000
 
 **Test coverage: 40+ tests across 4 test files**
 
-| File | What it covers |
-|---|---|
-| `test_pipeline.py` | Ingest, idempotency, schema validation, all 8 event types, edge cases |
-| `test_metrics.py` | Metrics, funnel drop-off, heatmap normalisation, health endpoint |
-| `test_anomalies.py` | Queue spike, abandonment, dead zone, severity ordering, suggested_action |
-| `test_session_stitching.py` | Cross-camera funnel stitching, tracker Re-ID, direction detection |
+| File                        | What it covers                                                           |
+| --------------------------- | ------------------------------------------------------------------------ |
+| `test_pipeline.py`          | Ingest, idempotency, schema validation, all 8 event types, edge cases    |
+| `test_metrics.py`           | Metrics, funnel drop-off, heatmap normalisation, health endpoint         |
+| `test_anomalies.py`         | Queue spike, abandonment, dead zone, severity ordering, suggested_action |
+| `test_session_stitching.py` | Cross-camera funnel stitching, tracker Re-ID, direction detection        |
 
 ---
 

@@ -28,7 +28,7 @@ Claude initially suggested MOG2 for "zero-dependency Docker startup." My own ass
 
 4. **Docker startup:** I pre-download `yolov8n.pt` (6MB) during `docker build` using a `RUN python -c "YOLO('yolov8n.pt')"` layer. The container starts with zero download latency. If build-time download fails (no internet), ultralytics caches the model on first run — acceptable for the acceptance gate since the reviewer will have internet.
 
-5. **CPU performance:** YOLOv8n on CPU at every-5th-frame sampling runs at ~2–3 fps effective — sufficient for retail CCTV where events happen on a seconds timescale, not milliseconds.
+5. **Frame sampling: every-3rd-frame (5fps effective):** Initial implementation sampled every 5th frame (~3fps). I raised this to every 3rd frame (~5fps) after realising the direction buffer (10-frame linear regression) was operating on too-sparse a trajectory at 3fps — a fast-moving entry person might only produce 3-4 processed frames before exiting the threshold region, giving the regression insufficient data. At 5fps, the same person produces 5-7 frames, making direction classification reliable. CPU cost is ~67% higher but still runs in acceptable time on laptop hardware.
 
 **Sub-decision: Re-ID Appearance Features**
 

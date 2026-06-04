@@ -1,14 +1,18 @@
 #!/bin/bash
 # One command to process all CCTV clips (Store 1 + Store 2) and feed into API
 #
-# Usage:
-#   bash pipeline/run.sh                          # uses STORE1_DIR / STORE2_DIR env vars
-#   STORE1_DIR="/path/to/Store 1" STORE2_DIR="/path/to/Store 2" bash pipeline/run.sh
+# Usage — pick whichever works on your OS:
 #
-# Set these two environment variables to point at the video clip folders:
-#   STORE1_DIR   absolute path to the "Store 1" folder (contains CAM 1 - zone.mp4 etc.)
-#   STORE2_DIR   absolute path to the "Store 2" folder (contains entry 1.mp4 etc.)
-#   API_URL      default: http://localhost:8000
+#   Linux / Mac / Git Bash (inline env):
+#     STORE1_DIR="/path/to/Store 1" STORE2_DIR="/path/to/Store 2" bash pipeline/run.sh
+#
+#   Windows PowerShell (set vars first, then run):
+#     $env:STORE1_DIR = "C:\path\to\Store 1"
+#     $env:STORE2_DIR = "C:\path\to\Store 2"
+#     bash pipeline/run.sh
+#
+#   CLI arguments (works everywhere):
+#     bash pipeline/run.sh --store1 "C:/path/to/Store 1" --store2 "C:/path/to/Store 2"
 
 set -e
 
@@ -16,11 +20,25 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Default paths — override with env vars on your machine
+# Parse optional --store1 / --store2 / --api CLI arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --store1) STORE1_DIR="$2"; shift 2 ;;
+    --store2) STORE2_DIR="$2"; shift 2 ;;
+    --api)    API_URL="$2";    shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+# Fall back to env vars if CLI args not provided
 STORE1_DIR="${STORE1_DIR:-}"
 STORE2_DIR="${STORE2_DIR:-}"
-API_URL="${API_URL:-http://localhost:8000}"
+API_URL="${API_URL:-http://localhost:9000}"
 EVENTS_FILE="$PROJECT_ROOT/data/events.jsonl"
+
+# Convert Windows backslash paths to forward slashes (Git Bash on Windows)
+STORE1_DIR="${STORE1_DIR//\\//}"
+STORE2_DIR="${STORE2_DIR//\\//}"
 
 echo "=================================================="
 echo " Store Intelligence — Detection Pipeline"
@@ -29,9 +47,17 @@ echo "=================================================="
 # Validate that store directories are provided
 if [ -z "$STORE1_DIR" ] || [ -z "$STORE2_DIR" ]; then
     echo ""
-    echo "ERROR: Please set STORE1_DIR and STORE2_DIR environment variables."
+    echo "ERROR: Store directories not set. Use one of these methods:"
     echo ""
-    echo "Example (Windows Git Bash / WSL):"
+    echo "  Method 1 — CLI args (works on all platforms):"
+    echo '    bash pipeline/run.sh --store1 "C:/path/to/Store 1" --store2 "C:/path/to/Store 2"'
+    echo ""
+    echo "  Method 2 — PowerShell:"
+    echo '    $env:STORE1_DIR = "C:\path\to\Store 1"'
+    echo '    $env:STORE2_DIR = "C:\path\to\Store 2"'
+    echo '    bash pipeline/run.sh'
+    echo ""
+    echo "  Method 3 — Linux/Mac/Git Bash (inline):"
     echo '  STORE1_DIR="C:/path/to/Store 1" STORE2_DIR="C:/path/to/Store 2" bash pipeline/run.sh'
     echo ""
     echo "Example (Linux/Mac):"
@@ -67,7 +93,7 @@ python3 pipeline/detect.py \
     --store1-dir "$STORE1_DIR" \
     --store2-dir "$STORE2_DIR" \
     --output "$EVENTS_FILE" \
-    --every 5
+    --every 3
 
 echo ""
 echo "[2/3] Ingesting events into API ($API_URL)..."

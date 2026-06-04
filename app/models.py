@@ -2,7 +2,7 @@
 Pydantic event schema (validation) and SQLAlchemy ORM models.
 Aligned with sample_events.jsonl resource schema from updated problem statement.
 """
-from typing import Optional, List
+from typing import Optional, List, Any
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import Column, String, Integer, Float, Boolean, Text
 from database import Base
@@ -98,7 +98,7 @@ class EventIn(BaseModel):
 
 
 class IngestRequest(BaseModel):
-    events: List[EventIn]
+    events: List[Any]  # Accept raw dicts; validated per-event in the endpoint
 
 
 class IngestResponse(BaseModel):

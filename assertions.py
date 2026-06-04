@@ -81,12 +81,19 @@ try:
 except Exception as e:
     check("6. Ingest is idempotent", False, str(e))
 
-# 7. Invalid event_type rejected
+# 7. Invalid event_type — partial success (returns 200, errors=1, ingested=0)
+# The spec requires partial success: a batch with 1 bad + 4 good events must
+# return ingested=4, errors=1 — not a whole-batch 422.
 try:
     r = post_event(event_type="INVALID_TYPE", event_id=str(uuid.uuid4()))
-    check("7. Invalid event_type rejected with 422", r.status_code == 422)
+    data = r.json()
+    check(
+        "7. Invalid event_type → partial success (200, errors=1)",
+        r.status_code == 200 and data.get("errors", 0) == 1 and data.get("ingested", 0) == 0,
+        f"status={r.status_code} body={data}",
+    )
 except Exception as e:
-    check("7. Invalid event_type rejected", False, str(e))
+    check("7. Invalid event_type → partial success", False, str(e))
 
 # 8. Funnel
 try:

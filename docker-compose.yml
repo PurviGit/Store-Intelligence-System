@@ -1,5 +1,9 @@
 version: "3.9"
 
+# API image: FastAPI + SQLite only (no PyTorch/OpenCV) — builds in ~60s.
+# Pipeline image: YOLOv8n + OpenCV — run separately when processing CCTV clips.
+# See: STORE1_DIR="..." STORE2_DIR="..." bash pipeline/run.sh
+
 services:
   api:
     build:

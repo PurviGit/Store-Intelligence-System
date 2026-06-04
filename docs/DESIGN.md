@@ -111,6 +111,8 @@ Eight event types are supported: ENTRY, EXIT, ZONE_ENTER, ZONE_EXIT, ZONE_DWELL,
 
 **Idempotency:** Each event carries a UUID `event_id`. `POST /events/ingest` checks for existing `event_id` before inserting — identical payloads can be sent multiple times safely.
 
+**Partial ingest (important design choice):** `POST /events/ingest` accepts `List[Any]` at the Pydantic request level, then validates each event individually inside the handler. A batch of 500 events where 3 are malformed returns `{ingested: 497, errors: 3}` with per-event error detail — the whole batch does NOT fail with 422. This is the spec's explicit requirement ("Partial success on malformed events") and was a deliberate deviation from the default FastAPI pattern where `List[EventIn]` in the request model causes the entire batch to fail if any single event is invalid. The initial AI-generated code used `List[EventIn]` (cleaner but wrong for this requirement); I caught this discrepancy when writing the partial-success test and fixed it.
+
 **Graceful Degradation:** Database unavailability returns HTTP 503 with a structured JSON body (no stack traces). Checked by the DB middleware on every request.
 
 **Structured Logging:** Every request logs: `trace_id`, `endpoint`, `method`, `status_code`, `latency_ms`, `store_id` as JSON.

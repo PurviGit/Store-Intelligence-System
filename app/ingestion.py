@@ -53,7 +53,9 @@ def _save_event(db: Session, event: EventIn) -> bool:
 def ingest_events(request: IngestRequest, db: Session = Depends(get_db)):
     """
     Ingest a batch of up to 500 events.
-    Idempotent by event_id. Partial success on malformed events.
+    Idempotent by event_id. Partial success: valid events are ingested even if
+    others in the batch are malformed — bad events are counted in errors, not
+    returned as 422 (which would fail the whole batch).
     """
     if len(request.events) > 500:
         raise HTTPException(status_code=400, detail="Batch size exceeds 500 events")
@@ -63,7 +65,21 @@ def ingest_events(request: IngestRequest, db: Session = Depends(get_db)):
     errors = 0
     error_details = []
 
-    for event in request.events:
+    for i, raw in enumerate(request.events):
+        # Per-event validation — a bad event must not fail the whole batch
+        try:
+            if isinstance(raw, dict):
+                event = EventIn(**raw)
+            elif isinstance(raw, EventIn):
+                event = raw
+            else:
+                raise ValueError(f"Event must be a dict, got {type(raw).__name__}")
+        except (ValidationError, Exception) as e:
+            errors += 1
+            eid = raw.get("event_id", "?") if isinstance(raw, dict) else "?"
+            error_details.append({"index": i, "event_id": eid, "error": str(e)})
+            continue  # skip this event, keep processing the rest
+
         try:
             is_new = _save_event(db, event)
             if is_new:
@@ -72,7 +88,7 @@ def ingest_events(request: IngestRequest, db: Session = Depends(get_db)):
                 duplicates += 1
         except Exception as e:
             errors += 1
-            error_details.append({"event_id": getattr(event, "event_id", "unknown"), "error": str(e)})
+            error_details.append({"index": i, "event_id": event.event_id, "error": str(e)})
 
     try:
         db.commit()
