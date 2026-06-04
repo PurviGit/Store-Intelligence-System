@@ -1,4 +1,4 @@
-# Store Intelligence API
+# Store Intelligence System
 
 > **Purplle Tech Challenge 2026 — Round 2**  
 > End-to-end Store Intelligence System: raw CCTV footage → live store analytics
